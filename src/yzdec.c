@@ -280,7 +280,7 @@ int main(int argc, char **argv) {
     data = raw; datasz = (u32)fs;
     if (datasz >= 24 && memcmp(data, "yz01", 4) != 0) {
         u32 tot = ge32(data + datasz - 4);
-        if (tot && tot <= datasz) { data += datasz - tot; datasz = tot; }
+        if (tot && tot + 4 <= datasz) { data += datasz - 4 - tot; datasz = tot; }
     }
     if (datasz < 20 || memcmp(data, "yz0105", 6) != 0) die("bad archive (bad magic)");
     Atot = ge32(data + 8); Bt = ge32(data + 12); Cnt = ge32(data + 16);

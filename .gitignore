@@ -1,0 +1,7 @@
+*.obj
+*.lib
+*.pdb
+*.ilk
+*.exp
+*.res
+yz32lib/test/*.exe
