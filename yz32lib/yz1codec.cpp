@@ -467,6 +467,78 @@ done:
     return ok;
 }
 
+/* ---------------- streaming decoder ---------------- */
+struct StreamDecoder::Impl
+{
+    BitRd br;
+    SymDecoder sA, sB;
+    LzIn st;
+};
+
+StreamDecoder::StreamDecoder() : p(0)
+{
+}
+
+StreamDecoder::~StreamDecoder()
+{
+    if (p) {
+        free(p->st.T1); free(p->st.T2);
+        sd_free(&p->sA); sd_free(&p->sB);
+        delete p;
+    }
+}
+
+bool StreamDecoder::open(const unsigned char * body, size_t body_size, size_t head_size,
+                         unsigned char * header_out, char * err, size_t err_size)
+{
+    if (p) return false;
+    p = new Impl;
+    p->st.T1 = 0; p->st.T2 = 0;
+    memset(&p->sA, 0, sizeof(p->sA));
+    memset(&p->sB, 0, sizeof(p->sB));
+    p->br.d = body; p->br.len = (u32)body_size;
+    p->br.pos = 0; p->br.acc = 0; p->br.n = 0;
+    if (!read_code_tables(&p->br, &p->sA, &p->sB, err, err_size)) {
+        delete p; p = 0;
+        return false;
+    }
+    p->st.T1 = (u32 *)calloc(RING * RING, sizeof(u32));
+    p->st.T2 = (u32 *)calloc(RING * RING, sizeof(u32));
+    if (!p->st.T1 || !p->st.T2) {
+        set_err(err, err_size, "out of memory");
+        free(p->st.T1); free(p->st.T2);
+        sd_free(&p->sA); sd_free(&p->sB);
+        delete p; p = 0;
+        return false;
+    }
+    lz_in_reset(&p->st, header_out);
+    if (!lz_decompress(&p->br, &p->sA, &p->sB, (u32)head_size, &p->st, (u32)head_size)) {
+        set_err(err, err_size, "corrupted header stream");
+        free(p->st.T1); free(p->st.T2);
+        sd_free(&p->sA); sd_free(&p->sB);
+        delete p; p = 0;
+        return false;
+    }
+    return true;
+}
+
+void StreamDecoder::reset(unsigned char * out)
+{
+    if (p) lz_in_reset(&p->st, out);
+}
+
+bool StreamDecoder::decode(unsigned char * out, size_t cap, size_t need,
+                           char * err, size_t err_size)
+{
+    if (!p) { set_err(err, err_size, "decoder not open"); return false; }
+    p->st.out = out;
+    if (!lz_decompress(&p->br, &p->sA, &p->sB, (u32)need, &p->st, (u32)cap)) {
+        set_err(err, err_size, "corrupted data stream");
+        return false;
+    }
+    return true;
+}
+
 /* ---------------- bit writer ---------------- */
 struct BW { u8 * buf; u32 cap, nbits; };
 
@@ -688,18 +760,32 @@ bool compress(const unsigned char * table, size_t table_size,
     }
     off = 0;
     if (file_count) {
+        u32 max_size = 0, batch_len;
         if (!file_sizes) { set_err(err, err_size, "bad file table"); goto done; }
         for (fi = 0; fi < file_count; fi++) {
             u32 sz = (u32)file_sizes[fi];
-            if (off > payload_size || (size_t)sz > payload_size - off) {
+            if (sz > max_size) max_size = sz;
+        }
+        fi = 0;
+        while (fi < file_count) {
+            size_t start = fi;
+            batch_len = 0;
+            while (fi < file_count) {
+                u32 sz = (u32)file_sizes[fi];
+                if ((size_t)batch_len + sz > max_size) break;
+                batch_len += sz;
+                fi++;
+            }
+            if (fi == start) { set_err(err, err_size, "bad file table (size)"); goto done; }
+            if (off > payload_size || (size_t)batch_len > payload_size - off) {
                 set_err(err, err_size, "bad file table (size exceeds data)");
                 goto done;
             }
-            if (!lz_pass(lz, payload + off, sz, freqA, freqB, &t2, &nt2, &cap2)) {
+            if (!lz_pass(lz, payload + off, batch_len, freqA, freqB, &t2, &nt2, &cap2)) {
                 set_err(err, err_size, "compress pass 2 failed");
                 goto done;
             }
-            off += (size_t)sz;
+            off += batch_len;
         }
     } else {
         if (!lz_pass(lz, payload, (u32)payload_size, freqA, freqB, &t2, &nt2, &cap2)) {

@@ -31,6 +31,25 @@ bool decompress(const unsigned char * body, size_t body_size,
                 size_t head_size, size_t total_size,
                 unsigned char * out, char * err, size_t err_size);
 
+class StreamDecoder
+{
+public:
+    StreamDecoder();
+    ~StreamDecoder();
+
+    bool open(const unsigned char * body, size_t body_size, size_t head_size,
+              unsigned char * header_out, char * err, size_t err_size);
+    void reset(unsigned char * out);
+    bool decode(unsigned char * out, size_t cap, size_t need,
+                char * err, size_t err_size);
+
+private:
+    struct Impl;
+    Impl * p;
+    StreamDecoder(const StreamDecoder &);
+    StreamDecoder & operator=(const StreamDecoder &);
+};
+
 bool compress(const unsigned char * table, size_t table_size,
               const unsigned long * file_sizes, size_t file_count,
               const unsigned char * payload, size_t payload_size,

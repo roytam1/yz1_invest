@@ -360,8 +360,8 @@ static int decode_one(const char *arc, const char *outdir, const char *passwd,
     u32 Atot, Bt, Cnt, payload_size; int encrypted; u8 xk[4];
     char pwb[256];
     BitRd br; u32 valsA[ALPHA_A], valsB[ALPHA_B]; u16 lensA[ALPHA_A], lensB[ALPHA_B];
-    SymDecoder sA, sB; LzState st; u8 *outbuf;
-    u8 *table, *payload; u32 p;
+    SymDecoder sA, sB; LzState st;
+    u8 *table, *filebuf; u32 batch_off, max_size;
     struct { u32 size; u32 ts; const char *name; } *ents;
     unsigned __int64 sum;
     clock_t t0 = clock();
@@ -382,7 +382,6 @@ static int decode_one(const char *arc, const char *outdir, const char *passwd,
     }
     if (datasz < 20 || memcmp(data, "yz01", 4) != 0) die("bad archive (bad magic)");
     Atot = ge32(data + 8); Bt = ge32(data + 12); Cnt = ge32(data + 16);
-    if (Atot > 0x10000000u) die("archive too large");
     if (Bt > Atot) die("bad archive (header size > total size)");
     if ((unsigned __int64)Cnt * 8u > (unsigned __int64)Bt) die("bad archive (file table too small)");
     payload_size = Atot - Bt;
@@ -402,10 +401,10 @@ static int decode_one(const char *arc, const char *outdir, const char *passwd,
         if (data[7] != pw_chk(passwd)) die("Password is not match !");
         for (q = 20; q < datasz; q++) data[q] ^= xk[(q - 20) & 3];
     }
-    outbuf = (u8 *)calloc(Atot ? Atot : 1, 1);
+    table = (u8 *)malloc(Bt ? Bt : 1);
     st.T1 = (u32 *)calloc(RING * RING, sizeof(u32));
     st.T2 = (u32 *)calloc(RING * RING, sizeof(u32));
-    if (!outbuf || !st.T1 || !st.T2) die("oom tables");
+    if (!table || !st.T1 || !st.T2) die("oom tables");
 
     br.d = data + 20; br.len = datasz - 20; br.pos = 0; br.acc = 0; br.n = 0;
     for (i = 0; i < ALPHA_A; i++) lensA[i] = (u16)br_read(&br, 5);
@@ -427,11 +426,8 @@ static int decode_one(const char *arc, const char *outdir, const char *passwd,
     sd_init(&sA, valsA, lensA, ALPHA_A);
     sd_init(&sB, valsB, lensB, ALPHA_B);
 
-    lz_reset(&st, outbuf);
+    lz_reset(&st, table);
     if (!lz_decompress(&br, &sA, &sB, Bt, &st, Bt)) die("corrupt header stream");
-    lz_reset(&st, outbuf + Bt);
-    if (!lz_decompress(&br, &sA, &sB, payload_size, &st, payload_size)) die("corrupt data stream");
-    table = outbuf; payload = outbuf + Bt;
 
     ents = malloc(sizeof(*ents) * (size_t)(Cnt ? Cnt : 1));
     if (!ents) die("oom file table");
@@ -453,58 +449,72 @@ static int decode_one(const char *arc, const char *outdir, const char *passwd,
     for (i = 0; i < (int)Cnt; i++) sum += ents[i].size;
     if (sum > (unsigned __int64)payload_size) die("bad file table (sizes exceed data)");
 
+    max_size = 0;
+    for (i = 0; i < (int)Cnt; i++) if (ents[i].size > max_size) max_size = ents[i].size;
+    filebuf = (u8 *)malloc(max_size ? max_size : 1);
+    if (!filebuf) die("oom file buffer");
+
     printf("%s: %s (%d files, %s Bytes)\n", test_mode ? "TestDir" : "OutDir", outdir, (int)Cnt, fmt_num(payload_size));
-    if (test_mode) {
-        for (i = 0; i < (int)Cnt; i++)
+    batch_off = 0;
+    for (i = 0; i < (int)Cnt; i++) {
+        u32 file_start;
+        if (batch_off == 0 || (unsigned __int64)batch_off + ents[i].size > max_size) {
+            lz_reset(&st, filebuf);
+            batch_off = 0;
+        }
+        file_start = batch_off;
+        if (ents[i].size) {
+            if (!lz_decompress(&br, &sA, &sB, ents[i].size, &st, max_size)) die("corrupt data stream");
+        }
+        batch_off += ents[i].size;
+
+        if (test_mode) {
             printf("TestFile(%d/%d): %s (%s Bytes)\n", i + 1, (int)Cnt, ents[i].name, fmt_num(ents[i].size));
+            continue;
+        }
+
+        {
+            char path[1200];
+            int r = _snprintf(path, sizeof(path), "%s\\%s", outdir, ents[i].name);
+            if (r < 0 || r >= (int)sizeof(path)) die2("output path too long: ", ents[i].name);
+            {
+                char *s;
+                for (s = path; *s; ) {
+                    if (is_dbcs_lead((unsigned char)*s) && s[1]) { s += 2; continue; }
+                    if (*s == '/') *s = '\\';
+                    s++;
+                }
+            }
+            make_parents(path);
+            if (exists(path)) {
+                char q[2048];
+                _snprintf(q, sizeof(q), "File(%s) has already existed. Do you want to write over it?", ents[i].name);
+                q[sizeof(q) - 1] = 0;
+                if (!ask_yn(q, assume_yes)) {
+                    if (ask_yn("Do you compare previous file with compressed file?", assume_yes)) {
+                        printf("CompFile(%d/%d): %s (%s Bytes)\n", i + 1, (int)Cnt, ents[i].name, fmt_num(ents[i].size));
+                        if (compare_file(path, filebuf + file_start, ents[i].size))
+                            printf("Two files are entirely match.\n");
+                        else
+                            printf("Contents of previous file and compressed file is not match.\n");
+                    } else {
+                        printf("File(%s) is not output.\n", ents[i].name);
+                    }
+                    continue;
+                }
+            }
+            write_file(path, filebuf + file_start, ents[i].size, ents[i].ts);
+            printf("OutFile(%d/%d): %s (%s Bytes)\n", i + 1, (int)Cnt, ents[i].name, fmt_num(ents[i].size));
+        }
+    }
+    if (test_mode) {
         printf("Extraction TEST has done.\n has no any errors. (Tested in: %.2f seconds)\n",
                (double)(clock() - t0) / (double)CLOCKS_PER_SEC);
-        free(ents); free(outbuf); free(st.T1); free(st.T2); free(raw);
-        sd_free(&sA); sd_free(&sB);
-        return 0;
+    } else {
+        printf("Extraction Process is done successfully. (Processed in: %.2f seconds)\n",
+               (double)(clock() - t0) / (double)CLOCKS_PER_SEC);
     }
-
-    p = 0;
-    for (i = 0; i < (int)Cnt; i++) {
-        char path[1200];
-        int r = _snprintf(path, sizeof(path), "%s\\%s", outdir, ents[i].name);
-        if (r < 0 || r >= (int)sizeof(path)) die2("output path too long: ", ents[i].name);
-        if ((unsigned __int64)p + ents[i].size > (unsigned __int64)payload_size)
-            die("bad file table (file extends past data)");
-        {
-            char *s;
-            for (s = path; *s; ) {
-                if (is_dbcs_lead((unsigned char)*s) && s[1]) { s += 2; continue; }
-                if (*s == '/') *s = '\\';
-                s++;
-            }
-        }
-        make_parents(path);
-        if (exists(path)) {
-            char q[2048];
-            _snprintf(q, sizeof(q), "File(%s) has already existed. Do you want to write over it?", ents[i].name);
-            q[sizeof(q) - 1] = 0;
-            if (!ask_yn(q, assume_yes)) {
-                if (ask_yn("Do you compare previous file with compressed file?", assume_yes)) {
-                    printf("CompFile(%d/%d): %s (%s Bytes)\n", i + 1, (int)Cnt, ents[i].name, fmt_num(ents[i].size));
-                    if (compare_file(path, payload + p, ents[i].size))
-                        printf("Two files are entirely match.\n");
-                    else
-                        printf("Contents of previous file and compressed file is not match.\n");
-                } else {
-                    printf("File(%s) is not output.\n", ents[i].name);
-                }
-                p += ents[i].size;
-                continue;
-            }
-        }
-        write_file(path, payload + p, ents[i].size, ents[i].ts);
-        p += ents[i].size;
-        printf("OutFile(%d/%d): %s (%s Bytes)\n", i + 1, (int)Cnt, ents[i].name, fmt_num(ents[i].size));
-    }
-    printf("Extraction Process is done successfully. (Processed in: %.2f seconds)\n",
-           (double)(clock() - t0) / (double)CLOCKS_PER_SEC);
-    free(ents); free(outbuf); free(st.T1); free(st.T2); free(raw);
+    free(ents); free(table); free(filebuf); free(st.T1); free(st.T2); free(raw);
     sd_free(&sA); sd_free(&sB);
     return 0;
 }

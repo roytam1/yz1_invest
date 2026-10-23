@@ -595,17 +595,32 @@ static int pack(const char *const *args, int nargs, const char *outdir,
     }
     if (off != Bt) die("table size internal error");
 
-    /* two passes: the table as one buffer, then each file by itself.
-       The reference resets the LZ state at every file boundary. */
+    /* two passes: the table as one buffer, then payload in max-file-size
+       batches.  The reference resets the LZ state whenever the next file
+       would not fit in its max-file-size buffer. */
     memset(freqA, 0, sizeof(freqA));
     memset(freqB, 0, sizeof(freqB));
     lz_pass(&lz, tabledata, Bt, freqA, freqB, &t1, &nt1, &cap1);
-    for (i = 0; i < Cnt; i++) {
-        u8 *fb;
-        printf("InFile(%d/%d): %s (%s Bytes)\n", (int)i + 1, (int)Cnt, g_ents[i].path, fmt_num(g_ents[i].size));
-        fb = read_full(g_ents[i].fs, g_ents[i].size);
-        lz_pass(&lz, fb, g_ents[i].size, freqA, freqB, &t2, &nt2, &cap2);
-        free(fb);
+    {
+        u32 max_size = 0, batch_len = 0;
+        u8 *batch;
+        for (i = 0; i < Cnt; i++) if (g_ents[i].size > max_size) max_size = g_ents[i].size;
+        batch = (u8 *)malloc(max_size ? max_size : 1);
+        if (!batch) die("oom payload");
+        for (i = 0; i < Cnt; i++) {
+            u8 *fb;
+            printf("InFile(%d/%d): %s (%s Bytes)\n", (int)i + 1, (int)Cnt, g_ents[i].path, fmt_num(g_ents[i].size));
+            if (batch_len + g_ents[i].size > max_size) {
+                lz_pass(&lz, batch, batch_len, freqA, freqB, &t2, &nt2, &cap2);
+                batch_len = 0;
+            }
+            fb = read_full(g_ents[i].fs, g_ents[i].size);
+            memcpy(batch + batch_len, fb, g_ents[i].size);
+            batch_len += g_ents[i].size;
+            free(fb);
+        }
+        if (batch_len) lz_pass(&lz, batch, batch_len, freqA, freqB, &t2, &nt2, &cap2);
+        free(batch);
     }
 
     /* build Huffman tables once for both passes */

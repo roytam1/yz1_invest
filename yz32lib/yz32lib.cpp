@@ -324,8 +324,7 @@ vector<yzFileStat> yzDecodeHeader::filestat_Get()
 yzFileDecode::yzFileDecode(yzFileEv * in_yzm, const char * in_dir_name)
     : yzfiledecode_output_dir_name(0), yzfiledecode_p_yz_dec_head(0),
       yzm(in_yzm), p_bit_get(0), p_head(0), p_yz_decode(0),
-      dec_all_size(0), dec_head_size(0), dec_file_count(0), dec_data_size(0),
-      payload_ready(false)
+      dec_all_size(0), dec_head_size(0), dec_file_count(0), dec_data_size(0)
 {
     if (in_dir_name) {
         yzfiledecode_output_dir_name = _strdup(in_dir_name);
@@ -363,7 +362,6 @@ int yzFileDecode::YzFile_DecodeHeader(const char * in_file_name)
     }
     delete p_bit_get; delete p_head; delete p_yz_decode;
     p_bit_get = 0; p_head = 0; p_yz_decode = 0;
-    payload_ready = false;
 
     if (!read_all(in_file_name, raw)) {
         evEX(yzm, YZ_MSG_TBL_20, YZ_MSG_NO_20, in_file_name);
@@ -428,7 +426,6 @@ int yzFileDecode::YzFile_DecodeHeader(const char * in_file_name)
     p_head = new MemAlloc;
     p_head->table.assign(out.data(), (size_t)hdr.head_size);
     p_yz_decode = new yzDecode;
-    payload_ready = false;
 
     {
         bool ok = false;
@@ -462,58 +459,90 @@ int yzFileDecode::DecodeFile(const char * fileName, const int & in_decode_mode)
 {
     clock_t t0 = clock();
     long i;
-    size_t off = 0;
     const char * dir = yzfiledecode_output_dir_name;
     char sec[32];
+    unsigned char * buf = 0;
+    long max_size = 0;
+    size_t batch_off = 0;
+    unsigned __int64 total = 0;
+    char err[256];
 
     if (!yzfiledecode_p_yz_dec_head) {
         if (YzFile_DecodeHeader(fileName) < 0) return -1;
     }
-    if (!p_yz_decode) return -1;
+    if (!p_bit_get || !p_head || !p_yz_decode) return -1;
 
-    if (!payload_ready) {
-        std::string full;
-        char err[256];
-        if (dec_all_size < 0 || dec_all_size > 0x10000000L) {
-            char szbuf[32];
-            _snprintf(szbuf, sizeof(szbuf), "%ld", dec_all_size);
-            szbuf[sizeof(szbuf) - 1] = 0;
-            evEX(yzm, YZ_MSG_TBL_26, YZ_MSG_NO_26, szbuf);
-            return -1;
-        }
-        full.resize((std::string::size_type)(dec_all_size ? dec_all_size : 1));
-        if (!p_bit_get ||
-            !yz1codec::decompress((const unsigned char *)p_bit_get->body.data(), p_bit_get->body.size(),
-                                  (size_t)dec_head_size, (size_t)dec_all_size,
-                                  (unsigned char *)&full[0], err, sizeof(err))) {
+    if (dec_data_size < 0) {
+        evEX(yzm, YZ_MSG_TBL_92, YZ_MSG_NO_92);
+        return -1;
+    }
+    for (i = 0; i < yzfiledecode_p_yz_dec_head->m_file_count; i++) {
+        long sz = yzfiledecode_p_yz_dec_head->m_file_size_tbl[i];
+        if (sz < 0 || total + (unsigned __int64)sz > (unsigned __int64)dec_data_size) {
             evEX(yzm, YZ_MSG_TBL_92, YZ_MSG_NO_92);
             return -1;
         }
-        p_yz_decode->payload.assign(full.data() + dec_head_size,
-                                    (size_t)(dec_all_size - dec_head_size));
-        payload_ready = true;
+        total += (unsigned __int64)sz;
     }
 
-    for (i = 0; i < yzfiledecode_p_yz_dec_head->m_file_count; i++) {
-        yzDecHead * h = yzfiledecode_p_yz_dec_head;
-        yzFileStat st(h->m_file_name_tbl[i], h->m_file_size_tbl[i],
-                      (time_t)h->m_file_mtime_tbl[i]);
-        int act = yzm ? yzm->gauge_WriteInfo(st, (int)i, (int)h->m_file_count) : 0;
-        if (act == 2) return -1;
-        if (act == 1) { off += (size_t)h->m_file_size_tbl[i]; continue; }
-        if (in_decode_mode == 0) {
-            if (h->FileWrite(dir, (int)i,
-                             (const unsigned char *)p_yz_decode->payload.data() + off) != 0)
-                return -1;
+    max_size = yzfiledecode_p_yz_dec_head->m_file_size_max;
+    if (max_size < 0) max_size = 0;
+    buf = (unsigned char *)malloc((size_t)(max_size ? max_size : 1));
+    if (!buf) {
+        char szbuf[32];
+        _snprintf(szbuf, sizeof(szbuf), "%ld", max_size);
+        szbuf[sizeof(szbuf) - 1] = 0;
+        evEX(yzm, YZ_MSG_TBL_26, YZ_MSG_NO_26, szbuf);
+        return -1;
+    }
+
+    {
+        std::string table_chk;
+        yz1codec::StreamDecoder dec;
+        table_chk.resize((std::string::size_type)(dec_head_size ? dec_head_size : 1));
+        if (!dec.open((const unsigned char *)p_bit_get->body.data(), p_bit_get->body.size(),
+                      (size_t)dec_head_size, (unsigned char *)&table_chk[0], err, sizeof(err))) {
+            evEX(yzm, YZ_MSG_TBL_92, YZ_MSG_NO_92);
+            free(buf);
+            return -1;
         }
-        off += (size_t)h->m_file_size_tbl[i];
-        if (yzm && h->m_file_count) {
-            char ss[64];
-            _snprintf(ss, sizeof(ss), "%s", h->m_file_name_tbl[i].c_str());
-            yzm->gauge_String(ss);
-            yzm->gauge_Value((int)((i + 1) * 1000 / h->m_file_count), 0);
+
+        for (i = 0; i < yzfiledecode_p_yz_dec_head->m_file_count; i++) {
+            yzDecHead * h = yzfiledecode_p_yz_dec_head;
+            long sz = h->m_file_size_tbl[i];
+            size_t file_start;
+            yzFileStat st(h->m_file_name_tbl[i], sz, (time_t)h->m_file_mtime_tbl[i]);
+            int act = yzm ? yzm->gauge_WriteInfo(st, (int)i, (int)h->m_file_count) : 0;
+            if (act == 2) { free(buf); return -1; }
+
+            if (batch_off == 0 ||
+                (unsigned __int64)batch_off + (unsigned __int64)sz > (unsigned __int64)max_size) {
+                dec.reset(buf);
+                batch_off = 0;
+            }
+            file_start = batch_off;
+            if (sz && !dec.decode(buf, (size_t)max_size, (size_t)sz, err, sizeof(err))) {
+                evEX(yzm, YZ_MSG_TBL_92, YZ_MSG_NO_92);
+                free(buf);
+                return -1;
+            }
+            batch_off += (size_t)sz;
+
+            if (act == 0 && in_decode_mode == 0) {
+                if (h->FileWrite(dir, (int)i, buf + file_start) != 0) {
+                    free(buf);
+                    return -1;
+                }
+            }
+            if (yzm && h->m_file_count) {
+                char ss[64];
+                _snprintf(ss, sizeof(ss), "%s", h->m_file_name_tbl[i].c_str());
+                yzm->gauge_String(ss);
+                yzm->gauge_Value((int)((i + 1) * 1000 / h->m_file_count), 0);
+            }
         }
     }
+    free(buf);
     sec_to_str(t0, sec, sizeof(sec));
     evINF(yzm, YZ_MSG_TBL_38, YZ_MSG_NO_38, sec);
     return 0;
