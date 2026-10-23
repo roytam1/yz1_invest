@@ -553,6 +553,7 @@ int yzFileEncode::EncodeFile(const char * in_file_name)
     bool enc = false;
     struct _stat st;
     size_t Bt, Atot, i;
+    std::vector<unsigned long> sizes;
     unsigned char * body = 0;
     size_t blen = 0;
     char err[256];
@@ -662,6 +663,7 @@ int yzFileEncode::EncodeFile(const char * in_file_name)
             return -1;
         }
         payload += data;
+        sizes.push_back((unsigned long)ents[i].size);
         if (yzm) {
             yzm->gauge_String(ents[i].name.c_str());
             yzm->gauge_Value((int)((i + 1) * 1000 / ents.size()), 0);
@@ -669,6 +671,7 @@ int yzFileEncode::EncodeFile(const char * in_file_name)
     }
 
     if (!yz1codec::compress((const unsigned char *)table.data(), Bt,
+                            sizes.empty() ? 0 : &sizes[0], sizes.size(),
                             (const unsigned char *)payload.data(), payload.size(),
                             &body, &blen, err, sizeof(err))) {
         evEX(yzm, YZ_MSG_TBL_51, YZ_MSG_NO_51, "0");

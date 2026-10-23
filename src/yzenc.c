@@ -524,8 +524,8 @@ static int pack(const char *const *args, int nargs, const char *outdir,
 {
     char outname[1040];
     u32 Cnt, i;
-    u32 Bt, Atot, off, nbyte, nbyte2;
-    u8 *tabledata, *payload;
+    u32 Bt, Atot, off, nbyte;
+    u8 *tabledata;
     u32 nt1 = 0, nt2 = 0, cap1 = 0, cap2 = 0;
     Tok *t1 = NULL, *t2 = NULL;
     u32 freqA[ALPHA_A], freqB[ALPHA_B];
@@ -595,24 +595,18 @@ static int pack(const char *const *args, int nargs, const char *outdir,
     }
     if (off != Bt) die("table size internal error");
 
-    /* payload concat */
-    payload = (u8 *)malloc(Atot - Bt ? (Atot - Bt) : 1);
-    if (!payload) die("oom payload");
-    nbyte2 = 0;
+    /* two passes: the table as one buffer, then each file by itself.
+       The reference resets the LZ state at every file boundary. */
+    memset(freqA, 0, sizeof(freqA));
+    memset(freqB, 0, sizeof(freqB));
+    lz_pass(&lz, tabledata, Bt, freqA, freqB, &t1, &nt1, &cap1);
     for (i = 0; i < Cnt; i++) {
         u8 *fb;
         printf("InFile(%d/%d): %s (%s Bytes)\n", (int)i + 1, (int)Cnt, g_ents[i].path, fmt_num(g_ents[i].size));
         fb = read_full(g_ents[i].fs, g_ents[i].size);
-        memcpy(payload + nbyte2, fb, g_ents[i].size);
-        nbyte2 += g_ents[i].size;
+        lz_pass(&lz, fb, g_ents[i].size, freqA, freqB, &t2, &nt2, &cap2);
         free(fb);
     }
-
-    /* two passes over table then payload, shared freq tables */
-    memset(freqA, 0, sizeof(freqA));
-    memset(freqB, 0, sizeof(freqB));
-    lz_pass(&lz, tabledata, Bt, freqA, freqB, &t1, &nt1, &cap1);
-    lz_pass(&lz, payload, Atot - Bt, freqA, freqB, &t2, &nt2, &cap2);
 
     /* build Huffman tables once for both passes */
     huff_build(freqA, ALPHA_A, valsA, lensA);
@@ -653,7 +647,7 @@ static int pack(const char *const *args, int nargs, const char *outdir,
     nbyte = bw_bytes(&bw);
     if (exists(outname) && !ask_overwrite(outname, assume_yes)) {
         printf("Information(1042):\nProcess can not continue. Thus stopped. without output file(%s)\n", outname);
-        free(t1); free(t2); free(tabledata); free(payload); free(bw.buf);
+        free(t1); free(t2); free(tabledata); free(bw.buf);
         return 0;
     }
 
@@ -668,7 +662,7 @@ static int pack(const char *const *args, int nargs, const char *outdir,
         q[sizeof(q) - 1] = 0;
         if (!ask_yes(q, assume_yes)) {
             printf("Information: File(%s) is not output.\n", outname);
-            free(t1); free(t2); free(tabledata); free(payload); free(bw.buf);
+            free(t1); free(t2); free(tabledata); free(bw.buf);
             return 0;
         }
     }
@@ -690,7 +684,7 @@ static int pack(const char *const *args, int nargs, const char *outdir,
     f = fopen(outname, "wb");
     if (!f) {
         fprintf(stderr, "yzenc: cannot write %s\n", outname);
-        free(t1); free(t2); free(tabledata); free(payload); free(bw.buf);
+        free(t1); free(t2); free(tabledata); free(bw.buf);
         return 1;
     }
     fwrite(hd, 1, 20, f);
@@ -699,7 +693,7 @@ static int pack(const char *const *args, int nargs, const char *outdir,
     printf("OutFile: %s (%s Bytes)\n", outname, fmt_num(20 + nbyte));
     printf("Compression process is done successfully. (Processed in: %.2f seconds)\n",
            (double)(clock() - t0) / (double)CLOCKS_PER_SEC);
-    free(t1); free(t2); free(tabledata); free(payload); free(bw.buf);
+    free(t1); free(t2); free(tabledata); free(bw.buf);
     return 0;
 }
 

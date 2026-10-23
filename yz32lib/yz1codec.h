@@ -28,6 +28,7 @@ bool decompress(const unsigned char * body, size_t body_size,
                 unsigned char * out, char * err, size_t err_size);
 
 bool compress(const unsigned char * table, size_t table_size,
+              const unsigned long * file_sizes, size_t file_count,
               const unsigned char * payload, size_t payload_size,
               unsigned char ** body, size_t * body_size,
               char * err, size_t err_size);

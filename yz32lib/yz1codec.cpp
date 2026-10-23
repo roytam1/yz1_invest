@@ -600,6 +600,7 @@ static bool lz_pass(LZ * s, const u8 * data, u32 len, u32 * freqA, u32 * freqB,
 }
 
 bool compress(const unsigned char * table, size_t table_size,
+              const unsigned long * file_sizes, size_t file_count,
               const unsigned char * payload, size_t payload_size,
               unsigned char ** body, size_t * body_size,
               char * err, size_t err_size)
@@ -613,6 +614,7 @@ bool compress(const unsigned char * table, size_t table_size,
     BW bw;
     bool ok = false;
     u32 i;
+    size_t fi, off;
 
     *body = 0; *body_size = 0;
     memset(freqA, 0, sizeof(freqA));
@@ -635,9 +637,26 @@ bool compress(const unsigned char * table, size_t table_size,
         set_err(err, err_size, "compress pass 1 failed");
         goto done;
     }
-    if (!lz_pass(lz, payload, (u32)payload_size, freqA, freqB, &t2, &nt2, &cap2)) {
-        set_err(err, err_size, "compress pass 2 failed");
-        goto done;
+    off = 0;
+    if (file_count) {
+        if (!file_sizes) { set_err(err, err_size, "bad file table"); goto done; }
+        for (fi = 0; fi < file_count; fi++) {
+            u32 sz = (u32)file_sizes[fi];
+            if (off > payload_size || (size_t)sz > payload_size - off) {
+                set_err(err, err_size, "bad file table (size exceeds data)");
+                goto done;
+            }
+            if (!lz_pass(lz, payload + off, sz, freqA, freqB, &t2, &nt2, &cap2)) {
+                set_err(err, err_size, "compress pass 2 failed");
+                goto done;
+            }
+            off += (size_t)sz;
+        }
+    } else {
+        if (!lz_pass(lz, payload, (u32)payload_size, freqA, freqB, &t2, &nt2, &cap2)) {
+            set_err(err, err_size, "compress pass 2 failed");
+            goto done;
+        }
     }
     if (!huff_build(freqA, ALPHA_A, valsA, lensA) ||
         !huff_build(freqB, ALPHA_B, valsB, lensB)) {
