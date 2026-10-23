@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <direct.h>
@@ -268,7 +269,8 @@ static void write_file(const char *path, const u8 *data, size_t size, u32 ts) {
     fclose(f);
     if (ts) {
         ut.actime = (time_t)ts; ut.modtime = (time_t)ts;
-        _utime(path, &ut);
+        if (_utime(path, &ut) != 0)
+            printf("Timestamp of a file(%s) could not be changed. But continue.\n", path);
     }
 }
 
@@ -284,6 +286,19 @@ static int read_line(const char *prompt, char *buf, size_t n) {
     l = strlen(buf);
     while (l && (buf[l - 1] == '\n' || buf[l - 1] == '\r')) buf[--l] = 0;
     return 1;
+}
+
+static const char *fmt_num(u32 v) {
+    static char out[16];
+    char tmp[16];
+    int n = 0, i = 0;
+    do { tmp[n++] = (char)('0' + (int)(v % 10)); v /= 10; } while (v);
+    while (n) {
+        out[i++] = tmp[--n];
+        if (n && (n % 3) == 0) out[i++] = ',';
+    }
+    out[i] = 0;
+    return out;
 }
 
 static int exists(const char *path) {
@@ -349,6 +364,7 @@ static int decode_one(const char *arc, const char *outdir, const char *passwd,
     u8 *table, *payload; u32 p;
     struct { u32 size; u32 ts; const char *name; } *ents;
     unsigned __int64 sum;
+    clock_t t0 = clock();
 
     f = fopen(arc, "rb");
     if (!f) die2("cannot open archive: ", arc);
@@ -357,6 +373,7 @@ static int decode_one(const char *arc, const char *outdir, const char *passwd,
     if (!raw) die("oom archive");
     if (fread(raw, 1, (size_t)fs, f) != (size_t)fs) die("short archive");
     fclose(f);
+    printf("InFile: %s (%s Bytes)\n", arc, fmt_num((u32)fs));
 
     data = raw; datasz = (u32)fs;
     if (datasz >= 24 && memcmp(data, "yz01", 4) != 0) {
@@ -436,10 +453,12 @@ static int decode_one(const char *arc, const char *outdir, const char *passwd,
     for (i = 0; i < (int)Cnt; i++) sum += ents[i].size;
     if (sum > (unsigned __int64)payload_size) die("bad file table (sizes exceed data)");
 
+    printf("%s: %s (%d files, %s Bytes)\n", test_mode ? "TestDir" : "OutDir", outdir, (int)Cnt, fmt_num(payload_size));
     if (test_mode) {
         for (i = 0; i < (int)Cnt; i++)
-            printf("TestFile(%d/%d): %s (%d Bytes)\n", i + 1, (int)Cnt, ents[i].name, (int)ents[i].size);
-        printf("Extraction TEST has done.\n has no any errors. (%d file(s))\n", (int)Cnt);
+            printf("TestFile(%d/%d): %s (%s Bytes)\n", i + 1, (int)Cnt, ents[i].name, fmt_num(ents[i].size));
+        printf("Extraction TEST has done.\n has no any errors. (Tested in: %.2f seconds)\n",
+               (double)(clock() - t0) / (double)CLOCKS_PER_SEC);
         free(ents); free(outbuf); free(st.T1); free(st.T2); free(raw);
         sd_free(&sA); sd_free(&sB);
         return 0;
@@ -467,7 +486,7 @@ static int decode_one(const char *arc, const char *outdir, const char *passwd,
             q[sizeof(q) - 1] = 0;
             if (!ask_yn(q, assume_yes)) {
                 if (ask_yn("Do you compare previous file with compressed file?", assume_yes)) {
-                    printf("CompFile(%d/%d): %s (%d Bytes)\n", i + 1, (int)Cnt, ents[i].name, (int)ents[i].size);
+                    printf("CompFile(%d/%d): %s (%s Bytes)\n", i + 1, (int)Cnt, ents[i].name, fmt_num(ents[i].size));
                     if (compare_file(path, payload + p, ents[i].size))
                         printf("Two files are entirely match.\n");
                     else
@@ -481,8 +500,10 @@ static int decode_one(const char *arc, const char *outdir, const char *passwd,
         }
         write_file(path, payload + p, ents[i].size, ents[i].ts);
         p += ents[i].size;
-        printf("OutFile(%d/%d): %s (%d Bytes)\n", i + 1, (int)Cnt, ents[i].name, (int)ents[i].size);
+        printf("OutFile(%d/%d): %s (%s Bytes)\n", i + 1, (int)Cnt, ents[i].name, fmt_num(ents[i].size));
     }
+    printf("Extraction Process is done successfully. (Processed in: %.2f seconds)\n",
+           (double)(clock() - t0) / (double)CLOCKS_PER_SEC);
     free(ents); free(outbuf); free(st.T1); free(st.T2); free(raw);
     sd_free(&sA); sd_free(&sB);
     return 0;
@@ -503,6 +524,7 @@ int main(int argc, char **argv) {
 
     arcs = (const char **)malloc(sizeof(*arcs) * (size_t)(argc > 0 ? argc : 1));
     if (!arcs) die("oom args");
+    printf("yzdec : YAMAZAKI-Zip compatible decoder (1.05.2)\n");
 
     for (i = 1; i < argc; i++) {
         if (strncmp(argv[i], "-p", 2) == 0) passwd = argv[i] + 2;

@@ -514,7 +514,7 @@ static void gather_dir(const std::string & fspath, const std::string & prefix,
     h = _findfirst(mask.c_str(), &fd);
     if (h == -1) return;
     do {
-        if (fd.name[0] == '.') continue;
+        if (strcmp(fd.name, ".") == 0 || strcmp(fd.name, "..") == 0) continue;
         {
             SEnt e;
             e.fs = fspath + "\\" + fd.name;

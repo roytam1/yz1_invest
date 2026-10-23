@@ -64,6 +64,19 @@ static int read_line(const char *prompt, char *buf, size_t n) {
     return 1;
 }
 
+static const char *fmt_num(u32 v) {
+    static char out[16];
+    char tmp[16];
+    int n = 0, i = 0;
+    do { tmp[n++] = (char)('0' + (int)(v % 10)); v /= 10; } while (v);
+    while (n) {
+        out[i++] = tmp[--n];
+        if (n && (n % 3) == 0) out[i++] = ',';
+    }
+    out[i] = 0;
+    return out;
+}
+
 /* ---------------- bit writer (MSB first) ---------------- */
 typedef struct { u8 *buf; u32 cap, nbits; } BW;
 
@@ -391,7 +404,7 @@ static void add_dir2(const char *fspath, const char *prefix) {
     h = _findfirst(sub, &fd);
     if (h == -1) { fprintf(stderr, "yzenc: cannot list dir %s\n", fspath); exit(1); }
     do {
-        if (fd.name[0] == '.') continue;
+        if (strcmp(fd.name, ".") == 0 || strcmp(fd.name, "..") == 0) continue;
         {
             char fp[1024], dp[1024];
             sprintf(fp, "%s\\%s", fspath, fd.name);
@@ -465,13 +478,20 @@ static int exists(const char *p) {
 }
 
 /* EOF means yes, as in the 1.05.2 tools */
-static int ask_overwrite(const char *outname, int assume_yes) {
+static int ask_yes(const char *question, int assume_yes) {
     char buf[80];
     if (assume_yes) { printf("All YES.\n"); return 1; }
-    printf("Question:\nFile(%s) has already existed.\nDo you write over this file? [y/n]:", outname);
+    printf("%s [y/n]:", question);
     fflush(stdout);
     if (!fgets(buf, sizeof(buf), stdin)) return 1;
     return !(buf[0] == 'n' || buf[0] == 'N');
+}
+
+static int ask_overwrite(const char *outname, int assume_yes) {
+    char q[1200];
+    _snprintf(q, sizeof(q), "File(%s) has already existed. Do you write over this file?", outname);
+    q[sizeof(q) - 1] = 0;
+    return ask_yes(q, assume_yes);
 }
 
 /* output name: reference uses (outdir\) + arg after last backslash, ext -> .yz1 */
@@ -516,6 +536,11 @@ static int pack(const char *const *args, int nargs, const char *outdir,
     FILE *f;
     u8 hd[20];
     int k;
+    clock_t t0;
+    u32 source_bytes, out_bytes;
+    char q[1200];
+
+    t0 = clock();
 
     for (k = 0; k < nargs; k++) {
         if (has_yz1_ext(args[k])) {
@@ -526,9 +551,24 @@ static int pack(const char *const *args, int nargs, const char *outdir,
 
     g_nent = 0;
     for (k = 0; k < nargs; k++) add_any(args[k]);
-    if (g_nent == 0) { fprintf(stderr, "yzenc: no input files\n"); return 1; }
+    if (g_nent == 0) {
+        int any_dir = 0;
+        for (k = 0; k < nargs; k++) {
+            struct _stat st;
+            if (_stat(args[k], &st) == 0 && (st.st_mode & _S_IFDIR)) any_dir = 1;
+        }
+        if (!any_dir) { fprintf(stderr, "yzenc: no input files\n"); return 1; }
+    }
 
     make_outname(args[0], outdir, outname, sizeof(outname));
+    if (nargs == 1) {
+        struct _stat st;
+        if (_stat(args[0], &st) == 0 && (st.st_mode & _S_IFDIR)) {
+            u32 total = 0;
+            for (i = 0; i < g_nent; i++) total += g_ents[i].size;
+            printf("InDir: %s (%d files, %s Bytes)\n", arg_top(args[0]), (int)g_nent, fmt_num(total));
+        }
+    }
     for (i = 0; i < g_nent; i++) {
         if (same_file(outname, g_ents[i].fs)) {
             printf("Message(2040):\nCannot write over previous file(%s)\nPlease change a folder into which put compressed file.\n", outname);
@@ -560,7 +600,9 @@ static int pack(const char *const *args, int nargs, const char *outdir,
     if (!payload) die("oom payload");
     nbyte2 = 0;
     for (i = 0; i < Cnt; i++) {
-        u8 *fb = read_full(g_ents[i].fs, g_ents[i].size);
+        u8 *fb;
+        printf("InFile(%d/%d): %s (%s Bytes)\n", (int)i + 1, (int)Cnt, g_ents[i].path, fmt_num(g_ents[i].size));
+        fb = read_full(g_ents[i].fs, g_ents[i].size);
         memcpy(payload + nbyte2, fb, g_ents[i].size);
         nbyte2 += g_ents[i].size;
         free(fb);
@@ -608,14 +650,30 @@ static int pack(const char *const *args, int nargs, const char *outdir,
         }
     }
 
+    nbyte = bw_bytes(&bw);
     if (exists(outname) && !ask_overwrite(outname, assume_yes)) {
         printf("Information(1042):\nProcess can not continue. Thus stopped. without output file(%s)\n", outname);
         free(t1); free(t2); free(tabledata); free(payload); free(bw.buf);
         return 0;
     }
 
+    source_bytes = Atot - Bt;
+    out_bytes = 20 + nbyte;
+    if (out_bytes > source_bytes) {
+        printf("Output File : %s (Cannot compress : %.1f%%, %s Bytes)\n",
+               outname, source_bytes ? (double)out_bytes * 100.0 / (double)source_bytes : 0.0, fmt_num(out_bytes));
+        _snprintf(q, sizeof(q),
+                  "Could not compress because data is too few or too complex.\na filesize of compressed file(%s) is large than previous file. Do you output file?",
+                  outname);
+        q[sizeof(q) - 1] = 0;
+        if (!ask_yes(q, assume_yes)) {
+            printf("Information: File(%s) is not output.\n", outname);
+            free(t1); free(t2); free(tabledata); free(payload); free(bw.buf);
+            return 0;
+        }
+    }
+
     /* header + write */
-    nbyte = bw_bytes(&bw);
     memcpy(hd, "yz0105", 6);
     if (enc) {
         u32 k;
@@ -638,7 +696,9 @@ static int pack(const char *const *args, int nargs, const char *outdir,
     fwrite(hd, 1, 20, f);
     fwrite(bw.buf, 1, nbyte, f);
     fclose(f);
-    printf("OutFile: %s (%d Bytes)\n", outname, (int)(20 + nbyte));
+    printf("OutFile: %s (%s Bytes)\n", outname, fmt_num(20 + nbyte));
+    printf("Compression process is done successfully. (Processed in: %.2f seconds)\n",
+           (double)(clock() - t0) / (double)CLOCKS_PER_SEC);
     free(t1); free(t2); free(tabledata); free(payload); free(bw.buf);
     return 0;
 }
@@ -662,6 +722,7 @@ int main(int argc, char **argv) {
 
     args = (const char **)malloc(sizeof(*args) * (size_t)(argc > 0 ? argc : 1));
     if (!args) die("oom args");
+    printf("yzenc : YAMAZAKI-Zip compatible encoder (1.05.2)\n");
 
     for (i = 1; i < argc; i++) {
         if (strncmp(argv[i], "-d", 2) == 0) {
