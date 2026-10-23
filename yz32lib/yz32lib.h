@@ -23,8 +23,8 @@ typedef time_t YZtime_t;
 using std::string;
 using std::vector;
 
-typedef std::string              FileName ;  // ï¿½tï¿½@ï¿½Cï¿½ï¿½ï¿½ï¿½
-typedef std::vector< FileName >  FileTbl  ;  // ï¿½tï¿½@ï¿½Cï¿½ï¿½ï¿½ê——
+typedef std::string              FileName ;  // ƒtƒ@ƒCƒ‹–¼
+typedef std::vector< FileName >  FileTbl  ;  // ƒtƒ@ƒCƒ‹ˆê——
 
 #ifndef YZ1DLLEXP
 	#ifdef YZ1_STATIC
@@ -37,80 +37,80 @@ typedef std::vector< FileName >  FileTbl  ;  // ï¿½tï¿½@ï¿½Cï¿½ï¿½ï¿½ê——
 #endif
 
 //-------------------------------------------------------------------
-// yzDecHead ï¿½Nï¿½ï¿½ï¿½X
+// yzDecHead ƒNƒ‰ƒX
 
 class yzFileEv;
 
 class YZ1DLLEXP yzDecHead
 {
-    public: long        m_file_count ;           // ï¿½tï¿½@ï¿½Cï¿½ï¿½ï¿½ï¿½
-    public: long *      m_file_size_tbl ;        // ï¿½tï¿½@ï¿½Cï¿½ï¿½ï¿½Tï¿½Cï¿½Yï¿½iï¿½ï¿½ï¿½ï¿½ï¿½j
-    public: YZtime_t *  m_file_mtime_tbl ;       // ï¿½Xï¿½Vï¿½ï¿½ï¿½ï¿½ï¿½iï¿½ï¿½ï¿½ï¿½ï¿½j
-    public: FileTbl     m_file_name_tbl ;        // ï¿½tï¿½@ï¿½Cï¿½ï¿½ï¿½ï¿½ï¿½iï¿½ï¿½ï¿½ï¿½ï¿½j
-    public: int         m_file_name_max_length ; // ï¿½tï¿½@ï¿½Cï¿½ï¿½ï¿½ï¿½ï¿½Å‘å’·
-    public: long        m_file_size_max ;        // ï¿½tï¿½@ï¿½Cï¿½ï¿½ï¿½Tï¿½Cï¿½Yï¿½Å‘ï¿½
+    public: long        m_file_count ;           // ƒtƒ@ƒCƒ‹”
+    public: long *      m_file_size_tbl ;        // ƒtƒ@ƒCƒ‹ƒTƒCƒYi•¡”j
+    public: YZtime_t *  m_file_mtime_tbl ;       // XVi•¡”j
+    public: FileTbl     m_file_name_tbl ;        // ƒtƒ@ƒCƒ‹–¼i•¡”j
+    public: int         m_file_name_max_length ; // ƒtƒ@ƒCƒ‹–¼Å‘å’·
+    public: long        m_file_size_max ;        // ƒtƒ@ƒCƒ‹ƒTƒCƒYÅ‘å
 
-    private: yzFileEv * yzm ;              // ï¿½ï¿½ï¿½bï¿½Zï¿½[ï¿½Wï¿½oï¿½Íï¿½
+    private: yzFileEv * yzm ;              // ƒƒbƒZ[ƒWo—Íæ
 
     //-----------------------
-    //  ï¿½Rï¿½ï¿½ï¿½Xï¿½gï¿½ï¿½ï¿½Nï¿½^
+    //  ƒRƒ“ƒXƒgƒ‰ƒNƒ^
     public:  yzDecHead(
-        const unsigned char *  in_area,      // in : ï¿½tï¿½@ï¿½Cï¿½ï¿½ï¿½ê——ï¿½Gï¿½ï¿½ï¿½A
-        const long &           in_file_cnt,  // in : ï¿½tï¿½@ï¿½Cï¿½ï¿½ï¿½ï¿½
-        yzFileEv *             yzmev,        // in : ï¿½ï¿½ï¿½bï¿½Zï¿½[ï¿½Wï¿½oï¿½Íï¿½
-        const long &           in_size,      // kinaba :: in : in_areaï¿½ÌƒTï¿½Cï¿½Y(ï¿½oï¿½Cï¿½gï¿½ï¿½)
-	bool*                  success       // kinaba :: out : ï¿½fï¿½Rï¿½[ï¿½hï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½H
+        const unsigned char *  in_area,      // in : ƒtƒ@ƒCƒ‹ˆê——ƒGƒŠƒA
+        const long &           in_file_cnt,  // in : ƒtƒ@ƒCƒ‹”
+        yzFileEv *             yzmev,        // in : ƒƒbƒZ[ƒWo—Íæ
+        const long &           in_size,      // kinaba :: in : in_area‚ÌƒTƒCƒY(ƒoƒCƒg”)
+	bool*                  success       // kinaba :: out : ƒfƒR[ƒh¬Œ÷‚µ‚½H
     );
 
     //-----------------------
-    //  ï¿½fï¿½Bï¿½ï¿½ï¿½Nï¿½gï¿½ï¿½ï¿½Ì“ï¿½ï¿½eï¿½Æƒï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ì“ï¿½ï¿½eï¿½Æ”ï¿½r
-    public: int                             // out: 1:ï¿½ï¿½ï¿½f, 0:ï¿½sï¿½ï¿½vï¿½ï¿½ï¿½ï¿½(ï¿½ï¿½ï¿½s), -1:ï¿½sï¿½ï¿½vï¿½ï¿½ï¿½ï¿½(ï¿½ï¿½ï¿½s)
+    //  ƒfƒBƒŒƒNƒgƒŠ‚Ì“à—e‚Æƒƒ‚ƒŠ‚Ì“à—e‚Æ”äŠr
+    public: int                             // out: 1:’†’f, 0:•sˆê’v‚ ‚è(‘±s), -1:•sˆê’v–³‚µ(‘±s)
     MemChk(
-        const char *           in_dir_name, // in : ï¿½fï¿½Bï¿½ï¿½ï¿½Nï¿½gï¿½ï¿½ï¿½ï¿½
-        const int &            in_n,        // in : n ï¿½Ô–ï¿½
-        const unsigned char *  in_mem       // in : ï¿½ï¿½rï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+        const char *           in_dir_name, // in : ƒfƒBƒŒƒNƒgƒŠ–¼
+        const int &            in_n,        // in : n ”Ô–Ú
+        const unsigned char *  in_mem       // in : ”äŠrƒƒ‚ƒŠ
     );
 
     //-----------------------
-    //  ï¿½fï¿½Bï¿½ï¿½ï¿½Nï¿½gï¿½ï¿½ï¿½Ì“ï¿½ï¿½eï¿½ï¿½\ï¿½ï¿½
+    //  ƒfƒBƒŒƒNƒgƒŠ‚Ì“à—e‚ğ•\¦
     public: void  Print();
 
     //-----------------------
-    //  ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½eï¿½ï¿½ï¿½tï¿½@ï¿½Cï¿½ï¿½ï¿½Æ‚ï¿½ï¿½Äoï¿½ï¿½
-    int                                     // out: 0:OK, !0:ï¿½ï¿½ï¿½s
+    //  ƒƒ‚ƒŠ“à—e‚ğƒtƒ@ƒCƒ‹‚Æ‚µ‚Äo—Í
+    int                                     // out: 0:OK, !0:¸”s
     FileWrite(                              // ---:
-        const char *           in_dir_name, // in : ï¿½Jï¿½ï¿½ï¿½ï¿½ï¿½gï¿½fï¿½Bï¿½ï¿½ï¿½Nï¿½gï¿½ï¿½
-        const int &            in_n,        // in : ï¿½Ôï¿½
-        const unsigned char *  in_data      // in : ï¿½oï¿½Íƒfï¿½[ï¿½^ï¿½iï¿½Wï¿½Jï¿½oï¿½fï¿½[ï¿½^ï¿½j
+        const char *           in_dir_name, // in : ƒJƒŒƒ“ƒgƒfƒBƒŒƒNƒgƒŠ
+        const int &            in_n,        // in : ”Ô†
+        const unsigned char *  in_data      // in : o—Íƒf[ƒ^i“WŠJoƒf[ƒ^j
     );
 };
 
 
 //-------------------------------------------------------------------
-// yzFileStat ï¿½Nï¿½ï¿½ï¿½X
+// yzFileStat ƒNƒ‰ƒX
 
 class YZ1DLLEXP yzFileStat
 {
-    public: string  m_file_name ;        // ï¿½tï¿½@ï¿½Cï¿½ï¿½ï¿½ï¿½
-    public: long    m_file_size ;        // ï¿½tï¿½@ï¿½Cï¿½ï¿½ï¿½Tï¿½Cï¿½Y
-    public: time_t  m_file_mtime ;       // ï¿½Xï¿½Vï¿½ï¿½ï¿½ï¿½
+    public: string  m_file_name ;        // ƒtƒ@ƒCƒ‹–¼
+    public: long    m_file_size ;        // ƒtƒ@ƒCƒ‹ƒTƒCƒY
+    public: time_t  m_file_mtime ;       // XV
 
     public: yzFileStat(
-        string  in_file_name,        // ï¿½tï¿½@ï¿½Cï¿½ï¿½ï¿½ï¿½
-        long    in_file_size,        // ï¿½tï¿½@ï¿½Cï¿½ï¿½ï¿½Tï¿½Cï¿½Y
-        time_t  in_file_mtime        // ï¿½Xï¿½Vï¿½ï¿½ï¿½ï¿½
+        string  in_file_name,        // ƒtƒ@ƒCƒ‹–¼
+        long    in_file_size,        // ƒtƒ@ƒCƒ‹ƒTƒCƒY
+        time_t  in_file_mtime        // XV
     );
 };
 
 
 //-------------------------------------------------------------------
-// yzDecodeHeader ï¿½Nï¿½ï¿½ï¿½X
+// yzDecodeHeader ƒNƒ‰ƒX
 
 class YZ1DLLEXP yzDecodeHeader
 {
     private : yzDecHead &  m_yz_dec_head ;
 
-    // ï¿½Rï¿½ï¿½ï¿½Xï¿½gï¿½ï¿½ï¿½Nï¿½^
+    // ƒRƒ“ƒXƒgƒ‰ƒNƒ^
     public : yzDecodeHeader(yzDecHead & in_yz_dec_head );
 
     public : vector< yzFileStat >  filestat_Get();
@@ -118,82 +118,82 @@ class YZ1DLLEXP yzDecodeHeader
 
 
 //-------------------------------------------------------------------
-//  yzFileEv ï¿½Nï¿½ï¿½ï¿½Xï¿½i yzFileEncode/yzFileDecode ï¿½ï¿½ï¿½ï¿½ÌƒCï¿½xï¿½ï¿½ï¿½gï¿½Nï¿½ï¿½ï¿½Xï¿½j
+//  yzFileEv ƒNƒ‰ƒXi yzFileEncode/yzFileDecode ‚©‚ç‚ÌƒCƒxƒ“ƒgƒNƒ‰ƒXj
 
 class YZ1DLLEXP yzFileEv
 {
     //-----------------------
-    //  [!]ï¿½ï¿½ï¿½bï¿½Zï¿½[ï¿½Wï¿½oï¿½ï¿½
-    public: virtual void           // out: ï¿½ï¿½ï¿½ï¿½
+    //  [!]ƒƒbƒZ[ƒWo—Í
+    public: virtual void           // out: –³‚µ
     MessEX(                        // ---: --------------
-        const char *  in_str,      // in : ï¿½oï¿½Íƒï¿½ï¿½bï¿½Zï¿½[ï¿½W
-        const int &   in_msg_no    // in : ï¿½ï¿½ï¿½bï¿½Zï¿½[ï¿½Wï¿½ï¿½ï¿½Ê”Ôï¿½
+        const char *  in_str,      // in : o—ÍƒƒbƒZ[ƒW
+        const int &   in_msg_no    // in : ƒƒbƒZ[ƒW¯•Ê”Ô†
     ) = 0 ;
 
     //-----------------------
-    //  [i]ï¿½ï¿½ï¿½bï¿½Zï¿½[ï¿½Wï¿½oï¿½ï¿½
-    public: virtual void           // out: ï¿½ï¿½ï¿½ï¿½
+    //  [i]ƒƒbƒZ[ƒWo—Í
+    public: virtual void           // out: –³‚µ
     MessINF(                       // ---: --------------
-        const char *  in_str,      // in : ï¿½oï¿½Íƒï¿½ï¿½bï¿½Zï¿½[ï¿½W
-        const int &   in_msg_no    // in : ï¿½ï¿½ï¿½bï¿½Zï¿½[ï¿½Wï¿½ï¿½ï¿½Ê”Ôï¿½
+        const char *  in_str,      // in : o—ÍƒƒbƒZ[ƒW
+        const int &   in_msg_no    // in : ƒƒbƒZ[ƒW¯•Ê”Ô†
     ) = 0 ;
 
     //-----------------------
-    //  [?]ï¿½ï¿½ï¿½bï¿½Zï¿½[ï¿½Wï¿½oï¿½ï¿½
+    //  [?]ƒƒbƒZ[ƒWo—Í
     public: virtual int            // out: 1:no, 0:yes
     MessYN(                        // ---: --------------
-        const char *  in_str,      // in : ï¿½oï¿½Íƒï¿½ï¿½bï¿½Zï¿½[ï¿½W
-        const int &   in_msg_no    // in : ï¿½ï¿½ï¿½bï¿½Zï¿½[ï¿½Wï¿½ï¿½ï¿½Ê”Ôï¿½
+        const char *  in_str,      // in : o—ÍƒƒbƒZ[ƒW
+        const int &   in_msg_no    // in : ƒƒbƒZ[ƒW¯•Ê”Ô†
     ) = 0 ;
 
     //-----------------------
-    //  [INPUT]ï¿½ï¿½ï¿½bï¿½Zï¿½[ï¿½Wï¿½oï¿½ï¿½
-    public: virtual char *         // out: ï¿½ï¿½ï¿½Í•ï¿½ï¿½ï¿½ï¿½ï¿½
+    //  [INPUT]ƒƒbƒZ[ƒWo—Í
+    public: virtual char *         // out: “ü—Í•¶š—ñ
     MessINPUT(                     // ---: --------------
-        const char *  in_str,      // in : ï¿½oï¿½Íƒï¿½ï¿½bï¿½Zï¿½[ï¿½W
-        const int &   in_msg_no    // in : ï¿½ï¿½ï¿½bï¿½Zï¿½[ï¿½Wï¿½ï¿½ï¿½Ê”Ôï¿½
+        const char *  in_str,      // in : o—ÍƒƒbƒZ[ƒW
+        const int &   in_msg_no    // in : ƒƒbƒZ[ƒW¯•Ê”Ô†
      ) = 0 ;
 
     //-----------------------
-    //  Gauge ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
-    public: virtual int                     // out: 0:ï¿½ï¿½ï¿½s, !0:ï¿½ï¿½ï¿½f
+    //  Gauge ‰Šú‰»
+    public: virtual int                     // out: 0:‘±s, !0:’†’f
     gauge_EncodeInit(                       // ---: --------------
-        const char *   in_input_file_name,  // in : ï¿½ï¿½ï¿½Íƒtï¿½@ï¿½Cï¿½ï¿½ï¿½iï¿½fï¿½Bï¿½ï¿½ï¿½Nï¿½gï¿½ï¿½ï¿½jï¿½ï¿½ï¿½iï¿½tï¿½ï¿½ï¿½pï¿½Xï¿½j
-        FileName &     output_name,         // in/out: ï¿½oï¿½Íƒtï¿½@ï¿½Cï¿½ï¿½ï¿½ï¿½ï¿½iï¿½uï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Â”\ï¿½j
-        FileTbl &      fullpath_list,       // in/out: ï¿½tï¿½ï¿½ï¿½pï¿½Xï¿½tï¿½@ï¿½Cï¿½ï¿½ï¿½ï¿½ï¿½ê——ï¿½iï¿½uï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Â”\ï¿½j
-        FileTbl &      file_list            // in/out: ï¿½ï¿½ï¿½Îƒtï¿½@ï¿½Cï¿½ï¿½ï¿½ï¿½ï¿½ê——ï¿½iï¿½uï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Â”\ï¿½j
+        const char *   in_input_file_name,  // in : “ü—Íƒtƒ@ƒCƒ‹iƒfƒBƒŒƒNƒgƒŠj–¼iƒtƒ‹ƒpƒXj
+        FileName &     output_name,         // in/out: o—Íƒtƒ@ƒCƒ‹–¼i’u‚«Š·‚¦‰Â”\j
+        FileTbl &      fullpath_list,       // in/out: ƒtƒ‹ƒpƒXƒtƒ@ƒCƒ‹–¼ˆê——i’u‚«Š·‚¦‰Â”\j
+        FileTbl &      file_list            // in/out: ‘Š‘Îƒtƒ@ƒCƒ‹–¼ˆê——i’u‚«Š·‚¦‰Â”\j
     ) = 0 ;
 
     //-----------------------
-    //  Gauge ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
-    public: virtual int                        // out: 0:ï¿½ï¿½ï¿½s, !0:ï¿½ï¿½ï¿½f
+    //  Gauge ‰Šú‰»
+    public: virtual int                        // out: 0:‘±s, !0:’†’f
     gauge_DecodeInit(                          // ---: --------------
-        const char *            in_file_name,  // in : ï¿½ğ“€‚ï¿½ï¿½ï¿½tï¿½@ï¿½Cï¿½ï¿½ï¿½ï¿½
-        const yzDecodeHeader &  in_yz_dec_head // in : ï¿½Wï¿½Jï¿½ï¿½ï¿½
+        const char *            in_file_name,  // in : ‰ğ“€‚·‚éƒtƒ@ƒCƒ‹–¼
+        const yzDecodeHeader &  in_yz_dec_head // in : “WŠJî•ñ
     ) = 0 ;
 
     //-----------------------
-    //  Gauge ï¿½Qï¿½[ï¿½Wï¿½Ì•ï¿½ï¿½ï¿½ï¿½ï¿½\ï¿½ï¿½
-    public: virtual int            // out: 0:ï¿½ï¿½ï¿½s, !0:ï¿½ï¿½ï¿½f
+    //  Gauge ƒQ[ƒW‚Ì•¶š—ñ•\¦
+    public: virtual int            // out: 0:‘±s, !0:’†’f
     gauge_String(                  // ---: --------------
-        const char *  in_str       // in : ï¿½ï¿½ï¿½bï¿½Zï¿½[ï¿½W
+        const char *  in_str       // in : ƒƒbƒZ[ƒW
     ) = 0 ;
 
     //-----------------------
-    //  Gauge ï¿½Qï¿½[ï¿½Wï¿½Ì’lï¿½\ï¿½ï¿½
-    public: virtual int            // out: 0:ï¿½ï¿½ï¿½s, !0:ï¿½ï¿½ï¿½f
+    //  Gauge ƒQ[ƒW‚Ì’l•\¦
+    public: virtual int            // out: 0:‘±s, !0:’†’f
     gauge_Value(                   // ---: --------------
-        const int &  in_per,       // in : ï¿½oï¿½ßŠï¿½ï¿½ï¿½ ï¿½pï¿½[ï¿½Zï¿½ï¿½ï¿½g 0-1000
-        const int &  in_end_time   // in : ï¿½Iï¿½ï¿½ï¿½\ï¿½zï¿½ï¿½ï¿½ï¿½ 1/100 ï¿½bï¿½ï¿½
+        const int &  in_per,       // in : Œo‰ßŠ„‡ ƒp[ƒZƒ“ƒg 0-1000
+        const int &  in_end_time   // in : I—¹—\‘z 1/100 •bŒã
     ) = 0 ;
 
     //-----------------------
-    //  Gauge ï¿½tï¿½@ï¿½Cï¿½ï¿½ï¿½oï¿½Í’ï¿½ï¿½Oï¿½ï¿½ï¿½
-    public: virtual int                 // out: 0:ï¿½oï¿½Í‘ï¿½ï¿½s, 1:skip(ï¿½oï¿½Í‚ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½s), 2:ï¿½ï¿½ï¿½f
+    //  Gauge ƒtƒ@ƒCƒ‹o—Í’¼‘Oî•ñ
+    public: virtual int                 // out: 0:o—Í‘±s, 1:skip(o—Í‚¹‚¸‘±s), 2:’†’f
     gauge_WriteInfo(                    // ---: --------------
-        const yzFileStat &  in_yzfstat, // in : ï¿½tï¿½@ï¿½Cï¿½ï¿½ï¿½Ú×ï¿½ï¿½
-        const int &         in_no,      // in : ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ìƒtï¿½@ï¿½Cï¿½ï¿½ï¿½Ôï¿½ï¿½i0ï¿½`ï¿½j
-        const int &         in_max      // in : ï¿½Sï¿½tï¿½@ï¿½Cï¿½ï¿½ï¿½ï¿½
+        const yzFileStat &  in_yzfstat, // in : ƒtƒ@ƒCƒ‹Ú×î•ñ
+        const int &         in_no,      // in : ˆ—’†‚Ìƒtƒ@ƒCƒ‹”Ô†i0`j
+        const int &         in_max      // in : ‘Sƒtƒ@ƒCƒ‹”
     ) = 0 ;
 };
 
@@ -203,11 +203,11 @@ class YZ1DLLEXP yzFileEv
 class YZ1DLLEXP YzMessage
 {
     //-----------------------
-    // ï¿½ï¿½ï¿½bï¿½Zï¿½[ï¿½Wï¿½ï¿½ï¿½ï¿½iï¿½ï¿½ï¿½{ï¿½ï¿½/ï¿½pï¿½ï¿½j
+    // ƒƒbƒZ[ƒWŒ¾Œêi“ú–{Œê/‰pŒêj
     public: enum language_type
     {
-        language_japanese = 1, // ï¿½ï¿½ï¿½{ï¿½ï¿½
-        language_english  = 2, // ï¿½pï¿½ï¿½
+        language_japanese = 1, // “ú–{Œê
+        language_english  = 2, // ‰pŒê
     } ;
 
     public: static language_type  language ;
@@ -218,65 +218,65 @@ class YZ1DLLEXP YzMessage
 
 //-------------------------------------------------------------------
 
-enum YZ_MAIN_ENCODE_PASSWD_MODE    // ï¿½pï¿½Xï¿½ï¿½ï¿½[ï¿½hï¿½Ìgï¿½p
+enum YZ_MAIN_ENCODE_PASSWD_MODE    // ƒpƒXƒ[ƒh‚Ìg—p
 {
-    YZ_MAIN_ENCODE_PASSWD_OFF = 0, // ï¿½pï¿½Xï¿½ï¿½ï¿½[ï¿½hï¿½nï¿½eï¿½e
-    YZ_MAIN_ENCODE_PASSWD_ON  = 1, // ï¿½pï¿½Xï¿½ï¿½ï¿½[ï¿½hï¿½nï¿½m
-    YZ_MAIN_ENCODE_PASSWD_PUB = 2  // ï¿½ï¿½ï¿½Jï¿½`ï¿½ï¿½ï¿½pï¿½Xï¿½ï¿½ï¿½[ï¿½hï¿½nï¿½m
+    YZ_MAIN_ENCODE_PASSWD_OFF = 0, // ƒpƒXƒ[ƒh‚n‚e‚e
+    YZ_MAIN_ENCODE_PASSWD_ON  = 1, // ƒpƒXƒ[ƒh‚n‚m
+    YZ_MAIN_ENCODE_PASSWD_PUB = 2  // ŒöŠJŒ`®ƒpƒXƒ[ƒh‚n‚m
 } ;
 
 
 //-------------------------------------------------------------------
-//  yzFileEncode ï¿½Nï¿½ï¿½ï¿½X
+//  yzFileEncode ƒNƒ‰ƒX
 
 class YZ1DLLEXP yzFileEncode
 {
-    public:  FileName          m_output_name ;  // ï¿½ï¿½ï¿½kï¿½ï¿½Ìoï¿½Íƒtï¿½@ï¿½Cï¿½ï¿½ï¿½ï¿½
+    public:  FileName          m_output_name ;  // ˆ³kŒã‚Ìo—Íƒtƒ@ƒCƒ‹–¼
 
-    private: yzFileEv *        yzm ;            // ï¿½ï¿½ï¿½bï¿½Zï¿½[ï¿½Wï¿½oï¿½Íï¿½
-    private: const char *      dirName ;        // ï¿½ï¿½ï¿½kï¿½tï¿½@ï¿½Cï¿½ï¿½ï¿½oï¿½Íƒfï¿½Bï¿½ï¿½ï¿½Nï¿½gï¿½ï¿½
-    private: const char *      SelfEncodeFile ; // ï¿½ï¿½ï¿½È‰ğ“€ƒtï¿½@ï¿½Cï¿½ï¿½ï¿½ì¬
-    private: const enum YZ_MAIN_ENCODE_PASSWD_MODE  passwd_mode ; // ï¿½pï¿½Xï¿½ï¿½ï¿½[ï¿½hï¿½Ìgï¿½p
+    private: yzFileEv *        yzm ;            // ƒƒbƒZ[ƒWo—Íæ
+    private: const char *      dirName ;        // ˆ³kƒtƒ@ƒCƒ‹o—ÍƒfƒBƒŒƒNƒgƒŠ
+    private: const char *      SelfEncodeFile ; // ©ŒÈ‰ğ“€ƒtƒ@ƒCƒ‹ì¬
+    private: const enum YZ_MAIN_ENCODE_PASSWD_MODE  passwd_mode ; // ƒpƒXƒ[ƒh‚Ìg—p
 
     //-----------------------
-    //  ï¿½Rï¿½ï¿½ï¿½Xï¿½gï¿½ï¿½ï¿½Nï¿½^
+    //  ƒRƒ“ƒXƒgƒ‰ƒNƒ^
     public: yzFileEncode(
-        yzFileEv *    in_yzm,                     // in : ï¿½ï¿½ï¿½bï¿½Zï¿½[ï¿½Wï¿½oï¿½Íï¿½
-        const char *  in_dir_name         = NULL, // in : ï¿½ï¿½ï¿½kï¿½tï¿½@ï¿½Cï¿½ï¿½ï¿½oï¿½Íƒfï¿½Bï¿½ï¿½ï¿½Nï¿½gï¿½ï¿½
-        const char *  in_self_encode_file = NULL, // in : ï¿½ï¿½ï¿½È‰ğ“€ƒtï¿½@ï¿½Cï¿½ï¿½ï¿½ì¬
-        const enum YZ_MAIN_ENCODE_PASSWD_MODE  in_passwd_mode = // in : ï¿½pï¿½Xï¿½ï¿½ï¿½[ï¿½hï¿½Ìgï¿½p
-             YZ_MAIN_ENCODE_PASSWD_OFF                          //      ï¿½pï¿½Xï¿½ï¿½ï¿½[ï¿½hï¿½nï¿½eï¿½e
+        yzFileEv *    in_yzm,                     // in : ƒƒbƒZ[ƒWo—Íæ
+        const char *  in_dir_name         = NULL, // in : ˆ³kƒtƒ@ƒCƒ‹o—ÍƒfƒBƒŒƒNƒgƒŠ
+        const char *  in_self_encode_file = NULL, // in : ©ŒÈ‰ğ“€ƒtƒ@ƒCƒ‹ì¬
+        const enum YZ_MAIN_ENCODE_PASSWD_MODE  in_passwd_mode = // in : ƒpƒXƒ[ƒh‚Ìg—p
+             YZ_MAIN_ENCODE_PASSWD_OFF                          //      ƒpƒXƒ[ƒh‚n‚e‚e
     );
 
     //-------------------------------------------------------------------
-    //  ï¿½uï¿½ï¿½ï¿½kï¿½v  -1:ï¿½Lï¿½ï¿½ï¿½ï¿½ï¿½Zï¿½ï¿½, 0ï¿½Èï¿½:ï¿½ï¿½ï¿½ï¿½Iï¿½ï¿½
-    public:    int                   // out: -1:ï¿½Lï¿½ï¿½ï¿½ï¿½ï¿½Zï¿½ï¿½, 0ï¿½Èï¿½:ï¿½ï¿½ï¿½ï¿½Iï¿½ï¿½
+    //  uˆ³kv  -1:ƒLƒƒƒ“ƒZƒ‹, 0ˆÈã:³íI—¹
+    public:    int                   // out: -1:ƒLƒƒƒ“ƒZƒ‹, 0ˆÈã:³íI—¹
     EncodeFile(
-        const char *  in_file_name   // in : ï¿½ï¿½ï¿½kï¿½ï¿½ï¿½ï¿½tï¿½@ï¿½Cï¿½ï¿½ï¿½ï¿½
+        const char *  in_file_name   // in : ˆ³k‚·‚éƒtƒ@ƒCƒ‹–¼
     );
 };
 
 
 //-------------------------------------------------------------------
-//  yzFileDecode ï¿½Nï¿½ï¿½ï¿½X
+//  yzFileDecode ƒNƒ‰ƒX
 
-class MyBitGetEv ;  // ï¿½ï¿½ï¿½kï¿½fï¿½[ï¿½^ï¿½Ç‚İï¿½ï¿½ï¿½
-class MemAlloc ;    // ï¿½ï¿½ï¿½kï¿½fï¿½[ï¿½^ï¿½Ìƒwï¿½bï¿½_ï¿½Ç‚İï¿½ï¿½İƒGï¿½ï¿½ï¿½A
-class yzDecode ;    // ï¿½ï¿½ï¿½kï¿½fï¿½[ï¿½^ï¿½Ì‰ï¿½
+class MyBitGetEv ;  // ˆ³kƒf[ƒ^“Ç‚İ‚İ
+class MemAlloc ;    // ˆ³kƒf[ƒ^‚Ìƒwƒbƒ_“Ç‚İ‚İƒGƒŠƒA
+class yzDecode ;    // ˆ³kƒf[ƒ^‚Ì‰ğ“€
 
 class YZ1DLLEXP yzFileDecode
 {
-friend class yzDLLArcHandler;		// ï¿½ï¿½ï¿½ï¿½É‰ï¿½ï¿½ï¿½ by K.INABA
-friend class yzDLLArcHeaderHandler;	// ï¿½ï¿½ï¿½ï¿½É‰ï¿½ï¿½ï¿½ by K.INABA
+friend class yzDLLArcHandler;		// Ÿè‚É‰ü‘¢ by K.INABA
+friend class yzDLLArcHeaderHandler;	// Ÿè‚É‰ü‘¢ by K.INABA
 
-    public:  char *       yzfiledecode_output_dir_name ; // ï¿½Lï¿½ï¿½ï¿½ï¿½Aï¿½fï¿½Bï¿½ï¿½ï¿½Nï¿½gï¿½ï¿½ï¿½ï¿½
-    public:  yzDecHead *  yzfiledecode_p_yz_dec_head ;   // ï¿½ï¿½ï¿½kï¿½fï¿½[ï¿½^ï¿½Ìƒwï¿½bï¿½_ï¿½ï¿½ï¿½
+    public:  char *       yzfiledecode_output_dir_name ; // L’·æAƒfƒBƒŒƒNƒgƒŠ–¼
+    public:  yzDecHead *  yzfiledecode_p_yz_dec_head ;   // ˆ³kƒf[ƒ^‚Ìƒwƒbƒ_î•ñ
 
-    private: yzFileEv *   yzm ;        // ï¿½ï¿½ï¿½bï¿½Zï¿½[ï¿½Wï¿½oï¿½Íï¿½
+    private: yzFileEv *   yzm ;        // ƒƒbƒZ[ƒWo—Íæ
 
-    private: MyBitGetEv *  p_bit_get ;  // ï¿½ï¿½ï¿½kï¿½fï¿½[ï¿½^ï¿½Ç‚İï¿½ï¿½ï¿½
-    private: MemAlloc *    p_head ;     // ï¿½ï¿½ï¿½kï¿½fï¿½[ï¿½^ï¿½Ìƒwï¿½bï¿½_ï¿½Ç‚İï¿½ï¿½İƒGï¿½ï¿½ï¿½A
-    private: yzDecode *    p_yz_decode ;// ï¿½ï¿½ï¿½kï¿½fï¿½[ï¿½^ï¿½Ì‰ï¿½
+    private: MyBitGetEv *  p_bit_get ;  // ˆ³kƒf[ƒ^“Ç‚İ‚İ
+    private: MemAlloc *    p_head ;     // ˆ³kƒf[ƒ^‚Ìƒwƒbƒ_“Ç‚İ‚İƒGƒŠƒA
+    private: yzDecode *    p_yz_decode ;// ˆ³kƒf[ƒ^‚Ì‰ğ“€
     private: long  dec_all_size   ; // 2: AllSize(4)
     private: long  dec_head_size  ; // 3: HeaderSize(4)
     private: long  dec_file_count ; // 4: FileCount(4)
@@ -284,39 +284,39 @@ friend class yzDLLArcHeaderHandler;	// ï¿½ï¿½ï¿½ï¿½É‰ï¿½ï¿½ï¿½ by K.INABA
 
 
 	//-------------------------------------------------------------------
-	//  ï¿½Rï¿½ï¿½ï¿½Xï¿½gï¿½ï¿½ï¿½Nï¿½^
+	//  ƒRƒ“ƒXƒgƒ‰ƒNƒ^
 	public: yzFileDecode(
-	    yzFileEv *    in_yzm,        // in : ï¿½ï¿½ï¿½bï¿½Zï¿½[ï¿½Wï¿½oï¿½Íï¿½
-	    const char *  in_dir_name    // in : ï¿½Lï¿½ï¿½ï¿½ï¿½Aï¿½fï¿½Bï¿½ï¿½ï¿½Nï¿½gï¿½ï¿½ï¿½ï¿½
+	    yzFileEv *    in_yzm,        // in : ƒƒbƒZ[ƒWo—Íæ
+	    const char *  in_dir_name    // in : L’·æAƒfƒBƒŒƒNƒgƒŠ–¼
 	);
 
 	//-------------------------------------------------------------------
-	//  ï¿½fï¿½Xï¿½gï¿½ï¿½ï¿½Nï¿½^
-	// ï¿½fï¿½Xï¿½gï¿½ï¿½ï¿½Nï¿½^ï¿½ï¿½ï¿½Kï¿½vï¿½ï¿½ class ï¿½ÍƒRï¿½sï¿½[ï¿½ï¿½ï¿½Ö~ï¿½ï¿½ï¿½ï¿½B
-	private: yzFileDecode            (const yzFileDecode&) ; // ï¿½Iï¿½uï¿½Wï¿½Fï¿½Nï¿½gï¿½Rï¿½sï¿½[ï¿½Ö~
-	private: yzFileDecode & operator=(const yzFileDecode&) ; // ï¿½Iï¿½uï¿½Wï¿½Fï¿½Nï¿½gï¿½Rï¿½sï¿½[ï¿½Ö~
+	//  ƒfƒXƒgƒ‰ƒNƒ^
+	// ƒfƒXƒgƒ‰ƒNƒ^‚ª•K—v‚È class ‚ÍƒRƒs[‚à‹Ö~‚·‚éB
+	private: yzFileDecode            (const yzFileDecode&) ; // ƒIƒuƒWƒFƒNƒgƒRƒs[‹Ö~
+	private: yzFileDecode & operator=(const yzFileDecode&) ; // ƒIƒuƒWƒFƒNƒgƒRƒs[‹Ö~
 	public: ~yzFileDecode();
 
 	//-------------------------------------------------------------------
-	//  YZï¿½tï¿½@ï¿½Cï¿½ï¿½ï¿½Ìƒwï¿½bï¿½_ï¿½ï¿½ï¿½Ì‚İ‰ï¿½
-	public: int                              // out:-1:ï¿½Lï¿½ï¿½ï¿½ï¿½ï¿½Zï¿½ï¿½, 0ï¿½Èï¿½:ï¿½ï¿½ï¿½ï¿½Iï¿½ï¿½
+	//  YZƒtƒ@ƒCƒ‹‚Ìƒwƒbƒ_î•ñ‚Ì‚İ‰ğ“€
+	public: int                              // out:-1:ƒLƒƒƒ“ƒZƒ‹, 0ˆÈã:³íI—¹
 	YzFile_DecodeHeader(
-	    const char *  in_file_name   // in : ï¿½Lï¿½ï¿½ï¿½ï¿½ï¿½ï¿½tï¿½@ï¿½Cï¿½ï¿½ï¿½ï¿½
+	    const char *  in_file_name   // in : L’·‚·‚éƒtƒ@ƒCƒ‹–¼
 	);
 
 	//-------------------------------------------------------------------
-	//  YZï¿½tï¿½@ï¿½Cï¿½ï¿½ï¿½Ì“ï¿½ï¿½eï¿½\ï¿½ï¿½
-	public: int                      // out: -1:ï¿½Lï¿½ï¿½ï¿½ï¿½ï¿½Zï¿½ï¿½, 0ï¿½Èï¿½:ï¿½ï¿½ï¿½ï¿½Iï¿½ï¿½
+	//  YZƒtƒ@ƒCƒ‹‚Ì“à—e•\¦
+	public: int                      // out: -1:ƒLƒƒƒ“ƒZƒ‹, 0ˆÈã:³íI—¹
 	Print(                           // ---: ----------------------------
-	    const char *  fileName       // in : ï¿½Lï¿½ï¿½ï¿½ï¿½ï¿½ï¿½tï¿½@ï¿½Cï¿½ï¿½ï¿½ï¿½
+	    const char *  fileName       // in : L’·‚·‚éƒtƒ@ƒCƒ‹–¼
 	);
 
 	//-------------------------------------------------------------------
-	//  YZï¿½tï¿½@ï¿½Cï¿½ï¿½ï¿½Ì‰ï¿½
-	public: int                      // out: -1:ï¿½Lï¿½ï¿½ï¿½ï¿½ï¿½Zï¿½ï¿½, 0ï¿½Èï¿½:ï¿½ï¿½ï¿½ï¿½Iï¿½ï¿½
+	//  YZƒtƒ@ƒCƒ‹‚Ì‰ğ“€
+	public: int                      // out: -1:ƒLƒƒƒ“ƒZƒ‹, 0ˆÈã:³íI—¹
 	DecodeFile(                      // ---: ----------------------------
-	    const char *  fileName,      // in : ï¿½Lï¿½ï¿½ï¿½ï¿½ï¿½ï¿½tï¿½@ï¿½Cï¿½ï¿½ï¿½ï¿½
-	    const int &   in_decode_mode // in : ï¿½Lï¿½ï¿½ï¿½ï¿½ï¿½[ï¿½h 0:ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ŞA1:ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ü‚È‚ï¿½ï¿½iï¿½ğ“€ƒeï¿½Xï¿½gï¿½j
+	    const char *  fileName,      // in : L’·‚·‚éƒtƒ@ƒCƒ‹–¼
+	    const int &   in_decode_mode // in : L’·ƒ‚[ƒh 0:‘‚«‚ŞA1:‘‚«‚Ü‚È‚¢i‰ğ“€ƒeƒXƒgj
 	);
 };
 
