@@ -1,6 +1,6 @@
 /* yzdec.c - .yz1 unpacker (YAMAZAKI-Zip v1.05.2), port of validated yzdec_py.py.
  * Build (MSVC6): cl /O2 /W2 yzdec.c /Feyzdec.exe
- * Usage: yzdec [-d<outdir>] [-p<password>] [-t] <archive.yz1>
+ * Usage: yzdec [-d<outdir>] [-p<password>] [-y] [-t] [-j] <archive.yz1> ...
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -235,20 +235,28 @@ static int lz_decompress(BitRd *br, const SymDecoder *sA, const SymDecoder *sB, 
 }
 
 /* ---------------- fs helpers ---------------- */
+static int is_dbcs_lead(unsigned char c) {
+    return (c & 0xF0) == 0x80 || (c & 0xF0) == 0x90 || (c & 0xF0) == 0xE0;
+}
+
 static void make_parents(const char *path) {
     char tmp[1300]; char *q;
     if (strlen(path) >= sizeof(tmp)) die2("path too long: ", path);
     _snprintf(tmp, sizeof(tmp) - 1, "%s", path);
     tmp[sizeof(tmp) - 1] = 0;
-    for (q = tmp; *q; q++) {
+    for (q = tmp; *q; ) {
+        if (is_dbcs_lead((unsigned char)*q) && q[1]) { q += 2; continue; }
         if (*q == '/') *q = '\\';
+        q++;
     }
-    for (q = tmp + 1; *q; q++) {
+    for (q = tmp + 1; *q; ) {
+        if (is_dbcs_lead((unsigned char)*q) && q[1]) { q += 2; continue; }
         if (*q == '\\') {
             char c = *q; *q = 0;
             if (tmp[0] && tmp[strlen(tmp) - 1] != ':') _mkdir(tmp);
             *q = c;
         }
+        q++;
     }
 }
 
@@ -268,9 +276,71 @@ static u32 ge32(const u8 *p) {
     return ((u32)p[0] << 24) | ((u32)p[1] << 16) | ((u32)p[2] << 8) | p[3];
 }
 
-int main(int argc, char **argv) {
-    const char *arc = NULL, *outdir = ".", *passwd = NULL, *dumpf = NULL;
-    int i, test_mode = 0;
+static int read_line(const char *prompt, char *buf, size_t n) {
+    size_t l;
+    printf("%s", prompt);
+    fflush(stdout);
+    if (!fgets(buf, n, stdin)) return 0;
+    l = strlen(buf);
+    while (l && (buf[l - 1] == '\n' || buf[l - 1] == '\r')) buf[--l] = 0;
+    return 1;
+}
+
+static int exists(const char *path) {
+    struct _stat st;
+    return _stat(path, &st) == 0;
+}
+
+/* EOF means yes, as in the 1.05.2 tools */
+static int ask_yn(const char *question, int assume_yes) {
+    char buf[80];
+    if (assume_yes) { printf("All YES.\n"); return 1; }
+    printf("%s [y/n]:", question);
+    fflush(stdout);
+    if (!fgets(buf, sizeof(buf), stdin)) return 1;
+    return !(buf[0] == 'n' || buf[0] == 'N');
+}
+
+static int compare_file(const char *path, const u8 *data, u32 size) {
+    FILE *f = fopen(path, "rb");
+    u8 buf[4096];
+    u32 off = 0;
+    if (!f) return 0;
+    while (off < size) {
+        u32 n = size - off;
+        if (n > sizeof(buf)) n = (u32)sizeof(buf);
+        if (fread(buf, 1, n, f) != n) { fclose(f); return 0; }
+        if (memcmp(buf, data + off, n) != 0) { fclose(f); return 0; }
+        off += n;
+    }
+    if (fgetc(f) != EOF) { fclose(f); return 0; }
+    fclose(f);
+    return 1;
+}
+
+/* SFX: yzdec.exe + archive + big-endian archive size */
+static int has_appended_archive(const char *exe) {
+    FILE *f = fopen(exe, "rb");
+    long sz;
+    u8 t[4];
+    u32 tot;
+    if (!f) return 0;
+    fseek(f, 0, SEEK_END);
+    sz = ftell(f);
+    if (sz < 28) { fclose(f); return 0; }
+    fseek(f, -4, SEEK_END);
+    if (fread(t, 1, 4, f) != 4) { fclose(f); return 0; }
+    tot = ge32(t);
+    if (!tot || (long)tot + 4 > sz) { fclose(f); return 0; }
+    fseek(f, sz - 4 - (long)tot, SEEK_SET);
+    if (fread(t, 1, 4, f) != 4) { fclose(f); return 0; }
+    fclose(f);
+    return memcmp(t, "yz01", 4) == 0;
+}
+
+static int decode_one(const char *arc, const char *outdir, const char *passwd,
+                      int test_mode, int assume_yes, const char *dumpf) {
+    int i;
     FILE *f; long fs; u8 *raw; u8 *data; u32 datasz;
     u32 Atot, Bt, Cnt, payload_size; int encrypted; u8 xk[4];
     char pwb[256];
@@ -280,14 +350,6 @@ int main(int argc, char **argv) {
     struct { u32 size; u32 ts; const char *name; } *ents;
     unsigned __int64 sum;
 
-    for (i = 1; i < argc; i++) {
-        if (strncmp(argv[i], "-p", 2) == 0) passwd = argv[i] + 2;
-        else if (strncmp(argv[i], "-d", 2) == 0) outdir = argv[i] + 2;
-        else if (strncmp(argv[i], "-x", 2) == 0) dumpf = argv[i] + 2;
-        else if (strcmp(argv[i], "-t") == 0) test_mode = 1;
-        else arc = argv[i];
-    }
-    if (!arc) { fprintf(stderr, "usage: yzdec [-d<outdir>] [-p<password>] [-t] <archive.yz1>\n"); return 1; }
     f = fopen(arc, "rb");
     if (!f) die2("cannot open archive: ", arc);
     fseek(f, 0, SEEK_END); fs = ftell(f); rewind(f);
@@ -390,8 +452,33 @@ int main(int argc, char **argv) {
         if (r < 0 || r >= (int)sizeof(path)) die2("output path too long: ", ents[i].name);
         if ((unsigned __int64)p + ents[i].size > (unsigned __int64)payload_size)
             die("bad file table (file extends past data)");
-        { char *s; for (s = path; *s; s++) if (*s == '/') *s = '\\'; }
+        {
+            char *s;
+            for (s = path; *s; ) {
+                if (is_dbcs_lead((unsigned char)*s) && s[1]) { s += 2; continue; }
+                if (*s == '/') *s = '\\';
+                s++;
+            }
+        }
         make_parents(path);
+        if (exists(path)) {
+            char q[2048];
+            _snprintf(q, sizeof(q), "File(%s) has already existed. Do you want to write over it?", ents[i].name);
+            q[sizeof(q) - 1] = 0;
+            if (!ask_yn(q, assume_yes)) {
+                if (ask_yn("Do you compare previous file with compressed file?", assume_yes)) {
+                    printf("CompFile(%d/%d): %s (%d Bytes)\n", i + 1, (int)Cnt, ents[i].name, (int)ents[i].size);
+                    if (compare_file(path, payload + p, ents[i].size))
+                        printf("Two files are entirely match.\n");
+                    else
+                        printf("Contents of previous file and compressed file is not match.\n");
+                } else {
+                    printf("File(%s) is not output.\n", ents[i].name);
+                }
+                p += ents[i].size;
+                continue;
+            }
+        }
         write_file(path, payload + p, ents[i].size, ents[i].ts);
         p += ents[i].size;
         printf("OutFile(%d/%d): %s (%d Bytes)\n", i + 1, (int)Cnt, ents[i].name, (int)ents[i].size);
@@ -399,5 +486,58 @@ int main(int argc, char **argv) {
     free(ents); free(outbuf); free(st.T1); free(st.T2); free(raw);
     sd_free(&sA); sd_free(&sB);
     return 0;
+}
+
+static void usage(void) {
+    fprintf(stderr,
+        "usage: yzdec [-d[outdir]] [-p[password]] [-y] [-t] [-j] <archive.yz1> ...\n");
+}
+
+int main(int argc, char **argv) {
+    const char *outdir = ".";
+    const char *passwd = NULL;
+    const char *dumpf = NULL;
+    const char **arcs;
+    char dirbuf[1024];
+    int narcs = 0, test_mode = 0, assume_yes = 0, i, rc, failed = 0;
+
+    arcs = (const char **)malloc(sizeof(*arcs) * (size_t)(argc > 0 ? argc : 1));
+    if (!arcs) die("oom args");
+
+    for (i = 1; i < argc; i++) {
+        if (strncmp(argv[i], "-p", 2) == 0) passwd = argv[i] + 2;
+        else if (strncmp(argv[i], "-d", 2) == 0) {
+            outdir = argv[i] + 2;
+            if (!outdir[0]) {
+                if (!read_line("InputDirName:\nPlease choose a folder you want to put extracted file(s) into.\n?:", dirbuf, sizeof(dirbuf)) || !dirbuf[0])
+                    outdir = ".";
+                else
+                    outdir = dirbuf;
+            }
+        }
+        else if (strncmp(argv[i], "-x", 2) == 0) dumpf = argv[i] + 2;
+        else if (strcmp(argv[i], "-t") == 0) test_mode = 1;
+        else if (strcmp(argv[i], "-y") == 0) assume_yes = 1;
+        else if (strcmp(argv[i], "-j") == 0) { /* English-only build: no-op */ }
+        else if (argv[i][0] == '-') { printf("Illegal Option!! : %s\n", argv[i]); usage(); return 1; }
+        else arcs[narcs++] = argv[i];
+    }
+
+    /* an SFX copy extracts the archive appended to itself, then pauses */
+    if (has_appended_archive(argv[0])) {
+        rc = decode_one(argv[0], outdir, passwd, test_mode, assume_yes, dumpf);
+        if (rc != 0) failed = 1;
+        printf("hit [enter] key\n");
+        fflush(stdout);
+        getchar();
+        return failed;
+    }
+
+    if (narcs == 0) { usage(); return 1; }
+    for (i = 0; i < narcs; i++) {
+        rc = decode_one(arcs[i], outdir, passwd, test_mode, assume_yes, dumpf);
+        if (rc != 0) failed = 1;
+    }
+    return failed;
 }
 

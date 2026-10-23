@@ -45,6 +45,25 @@ static u8 pw_chk(const char *pw) {
     return (u8)((s + n) & 0xFF);
 }
 
+/* "pub-xxxx-xxxx-xxxx" carries the 4 key bytes plus the chk byte */
+static int parse_pub(const char *pw, u8 key[4], u8 *chk) {
+    unsigned int b0, b1, b2, b3, b4;
+    if (sscanf(pw, "pub-%02x%02x-%02x%02x-%02x", &b0, &b1, &b2, &b3, &b4) != 5) return 0;
+    key[0] = (u8)b0; key[1] = (u8)b1; key[2] = (u8)b2; key[3] = (u8)b3;
+    *chk = (u8)b4;
+    return 1;
+}
+
+static int read_line(const char *prompt, char *buf, size_t n) {
+    size_t l;
+    printf("%s", prompt);
+    fflush(stdout);
+    if (!fgets(buf, n, stdin)) return 0;
+    l = strlen(buf);
+    while (l && (buf[l - 1] == '\n' || buf[l - 1] == '\r')) buf[--l] = 0;
+    return 1;
+}
+
 /* ---------------- bit writer (MSB first) ---------------- */
 typedef struct { u8 *buf; u32 cap, nbits; } BW;
 
@@ -385,9 +404,17 @@ static void add_dir2(const char *fspath, const char *prefix) {
 }
 
 /* reference strips only backslash-separated directories from the stored name */
+static int is_dbcs_lead(unsigned char c) {
+    return (c & 0xF0) == 0x80 || (c & 0xF0) == 0x90 || (c & 0xF0) == 0xE0;
+}
+
 static const char *arg_top(const char *arg) {
-    const char *p, *top = arg;
-    for (p = arg; *p; p++) if (*p == '\\') top = p + 1;
+    const char *p = arg, *top = arg;
+    while (*p) {
+        if (is_dbcs_lead((unsigned char)*p) && p[1]) { p += 2; continue; }
+        if (*p == '\\') top = p + 1;
+        p++;
+    }
     return top;
 }
 
@@ -455,9 +482,17 @@ static void make_outname(const char *arg, const char *outdir, char *out, size_t 
     const char *last = NULL;
 
     strcpy(top, t);
-    for (k = 0; top[k]; k++) if (top[k] == '/') top[k] = '\\';
+    for (k = 0; top[k]; ) {
+        if (is_dbcs_lead((unsigned char)top[k]) && top[k + 1]) { k += 2; continue; }
+        if (top[k] == '/') top[k] = '\\';
+        k++;
+    }
     bl = strlen(top);
-    for (k = 0; k < bl; k++) if (top[k] == '.') last = top + k;
+    for (k = 0; k < bl; ) {
+        if (is_dbcs_lead((unsigned char)top[k]) && k + 1 < bl) { k += 2; continue; }
+        if (top[k] == '.') last = top + k;
+        k++;
+    }
     dot = last ? (size_t)(last - top) : bl;
     if (outdir) _snprintf(out, outsz, "%s\\%.*s.yz1", outdir, (int)dot, top);
     else        _snprintf(out, outsz, "%.*s.yz1", (int)dot, top);
@@ -465,7 +500,7 @@ static void make_outname(const char *arg, const char *outdir, char *out, size_t 
 }
 
 static int pack(const char *const *args, int nargs, const char *outdir,
-                const char *passwd, int assume_yes)
+                const u8 key[4], int enc, u8 chk, int assume_yes)
 {
     char outname[1040];
     u32 Cnt, i;
@@ -582,13 +617,11 @@ static int pack(const char *const *args, int nargs, const char *outdir,
     /* header + write */
     nbyte = bw_bytes(&bw);
     memcpy(hd, "yz0105", 6);
-    if (passwd) {
-        u8 key[4];
+    if (enc) {
         u32 k;
-        derive_key(passwd, key);
         for (k = 0; k < nbyte; k++) bw.buf[k] ^= key[k & 3];
         hd[6] = 0x34;
-        hd[7] = pw_chk(passwd);
+        hd[7] = chk;
     } else {
         hd[6] = 0x30;
         hd[7] = 0x30;
@@ -610,43 +643,72 @@ static int pack(const char *const *args, int nargs, const char *outdir,
     return 0;
 }
 
+static void usage(void) {
+    fprintf(stderr,
+        "usage: yzenc [-d[outdir]] [-p[password]] [-y] [-j] [-m] <file|dir> ...\n"
+        "  -m  one archive per input (default: one archive for all inputs)\n"
+        "  -j  accepted for compatibility (English-only messages)\n");
+}
+
 int main(int argc, char **argv) {
     const char *outdir = NULL;
     const char *passwd = NULL;
     const char **args;
+    char pwbuf[256], pwb2[256], dirbuf[1024];
+    u8 key[4];
+    u8 chk = 0;
+    int enc = 0;
     int nargs = 0, multi = 0, assume_yes = 0, i, rc, failed = 0;
-    static char pwbuf[256];
 
     args = (const char **)malloc(sizeof(*args) * (size_t)(argc > 0 ? argc : 1));
     if (!args) die("oom args");
 
     for (i = 1; i < argc; i++) {
-        if (strncmp(argv[i], "-d", 2) == 0) { outdir = argv[i] + 2; if (!outdir[0]) outdir = NULL; }
+        if (strncmp(argv[i], "-d", 2) == 0) {
+            outdir = argv[i] + 2;
+            if (!outdir[0]) {
+                if (!read_line("InputDirName:\nPlease choose a folder you want to put compressed file(s) into.\n?:", dirbuf, sizeof(dirbuf)) || !dirbuf[0])
+                    outdir = NULL;
+                else
+                    outdir = dirbuf;
+            }
+        }
         else if (strncmp(argv[i], "-p", 2) == 0) passwd = argv[i] + 2;
         else if (strcmp(argv[i], "-y") == 0) assume_yes = 1;
         else if (strcmp(argv[i], "-m") == 0) multi = 1;
+        else if (strcmp(argv[i], "-j") == 0) { /* English-only build: no-op */ }
+        else if (argv[i][0] == '-') { printf("Illegal Option!! : %s\n", argv[i]); usage(); return 1; }
         else args[nargs++] = argv[i];
     }
-    if (nargs == 0) {
-        fprintf(stderr, "usage: yzenc [-d<outdir>] [-p<password>] [-y] [-m] <file|dir> ...\n");
-        return 1;
-    }
+    if (nargs == 0) { usage(); return 1; }
+
+    if (passwd) enc = 1;
     if (passwd && !passwd[0]) {
-        size_t l;
-        printf("InputPassword(1):\n");
-        if (!fgets(pwbuf, sizeof(pwbuf), stdin)) return 1;
-        l = strlen(pwbuf);
-        while (l && (pwbuf[l - 1] == '\n' || pwbuf[l - 1] == '\r')) pwbuf[--l] = 0;
-        if (!l) { fprintf(stderr, "yzenc: empty password\n"); return 1; }
+        for (;;) {
+            if (!read_line("InputPassword(1):\n", pwbuf, sizeof(pwbuf)) || !pwbuf[0]) {
+                fprintf(stderr, "yzenc: password was not input\n");
+                return 1;
+            }
+            if (!read_line("Please input again to confirm:\n", pwb2, sizeof(pwb2))) {
+                fprintf(stderr, "yzenc: password was not input\n");
+                return 1;
+            }
+            if (strcmp(pwbuf, pwb2) == 0) break;
+            printf("Password incorrect. Please retry again.\n");
+        }
         passwd = pwbuf;
+    }
+    if (enc && !parse_pub(passwd, key, &chk)) {
+        derive_key(passwd, key);
+        chk = pw_chk(passwd);
     }
 
     if (multi) {
         for (i = 0; i < nargs; i++) {
-            rc = pack(&args[i], 1, outdir, passwd, assume_yes);
+            rc = pack(&args[i], 1, outdir, key, enc, chk, assume_yes);
             if (rc != 0) failed = 1;
         }
         return failed;
     }
-    return pack(args, nargs, outdir, passwd, assume_yes) == 0 ? 0 : 1;
+    return pack(args, nargs, outdir, key, enc, chk, assume_yes) == 0 ? 0 : 1;
 }
