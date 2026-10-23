@@ -68,7 +68,7 @@ void make_pub_password(const unsigned char key[4], unsigned char chk, char * out
 
 bool read_header(const unsigned char * data, size_t size, Header * hdr)
 {
-    if (!data || size < 20 || memcmp(data, "yz0105", 6) != 0) return false;
+    if (!data || size < 20 || memcmp(data, "yz01", 4) != 0) return false;
     hdr->flags = data[6];
     hdr->chk = data[7];
     hdr->all_size  = ((unsigned long)data[8] << 24) | ((unsigned long)data[9] << 16) |

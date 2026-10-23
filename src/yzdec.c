@@ -380,7 +380,7 @@ static int decode_one(const char *arc, const char *outdir, const char *passwd,
         u32 tot = ge32(data + datasz - 4);
         if (tot && tot + 4 <= datasz) { data += datasz - 4 - tot; datasz = tot; }
     }
-    if (datasz < 20 || memcmp(data, "yz0105", 6) != 0) die("bad archive (bad magic)");
+    if (datasz < 20 || memcmp(data, "yz01", 4) != 0) die("bad archive (bad magic)");
     Atot = ge32(data + 8); Bt = ge32(data + 12); Cnt = ge32(data + 16);
     if (Atot > 0x10000000u) die("archive too large");
     if (Bt > Atot) die("bad archive (header size > total size)");
