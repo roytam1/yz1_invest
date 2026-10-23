@@ -1,6 +1,6 @@
 /* yzdec.c - .yz1 unpacker (YAMAZAKI-Zip v1.05.2), port of validated yzdec_py.py.
  * Build (MSVC6): cl /O2 /W2 yzdec.c /Feyzdec.exe
- * Usage: yzdec [-d<outdir>] [-p<password>] <archive.yz1>
+ * Usage: yzdec [-d<outdir>] [-p<password>] [-t] <archive.yz1>
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -37,6 +37,14 @@ static void derive_key(const char *pw, u8 key[4]) {
     { u32 v37 = (v101 + inc + v34 * v100) & MASK32;
       key[0] = (u8)(v37 >> 24); key[1] = (u8)(v37 >> 16);
       key[2] = (u8)(v37 >> 8);  key[3] = (u8)(v37 & 0xFF); }
+}
+
+/* header chk byte: (sum of (pw[i] ^ i) + len) & 0xFF */
+static u8 pw_chk(const char *pw) {
+    const u8 *b = (const u8 *)pw;
+    u32 n = (u32)strlen(pw), i, s = 0;
+    for (i = 0; i < n; i++) s += (u32)(b[i] ^ (u8)i);
+    return (u8)((s + n) & 0xFF);
 }
 
 /* ---------------- bit reader (MSB first) ---------------- */
@@ -168,9 +176,10 @@ static void lz_reset(LzState *st, u8 *out) {
     st->out = out; st->outpos = 0; st->h = 0;
 }
 
-static void lz_decompress(BitRd *br, const SymDecoder *sA, const SymDecoder *sB, u32 need, LzState *st) {
+static int lz_decompress(BitRd *br, const SymDecoder *sA, const SymDecoder *sB, u32 need, LzState *st, u32 cap) {
     u32 limit = st->outpos + need;
     int dbg = getenv("YZDECDBG") != 0;
+    if (need > cap - st->outpos) return 0;
     while (st->outpos < limit) {
         u32 p_start = st->outpos;
         int sym = sd_read(br, sA);
@@ -179,9 +188,13 @@ static void lz_decompress(BitRd *br, const SymDecoder *sA, const SymDecoder *sB,
             st->out[st->outpos++] = (u8)(sym - 512);
             is_lit = 1;
         } else {
-            u8 c = st->out[st->h];
-            u16 a0 = st->A[c];
-            u32 slot = ((u32)(sym & 0xFF) + a0) & 0xFF;
+            u8 c;
+            u16 a0;
+            u32 slot;
+            if (st->h >= st->outpos) return 0;
+            c = st->out[st->h];
+            a0 = st->A[c];
+            slot = ((u32)(sym & 0xFF) + a0) & 0xFF;
             is_lit = 0;
             if (sym >= 256) {
                 ml = st->T2[c * RING + slot];
@@ -197,6 +210,8 @@ static void lz_decompress(BitRd *br, const SymDecoder *sA, const SymDecoder *sB,
                 ml = (u32)(lc + 2);
                 src = st->T1[c * RING + slot];
             }
+            if (!ml || src >= st->outpos) return 0;
+            if (ml > cap - st->outpos) return 0;
             { u32 i; for (i = 0; i < ml; i++) st->out[st->outpos + i] = st->out[src + i];
               st->outpos += ml; }
         }
@@ -216,6 +231,7 @@ static void lz_decompress(BitRd *br, const SymDecoder *sA, const SymDecoder *sB,
             st->h = st->outpos - 1;
         }
     }
+    return 1;
 }
 
 /* ---------------- fs helpers ---------------- */
@@ -254,21 +270,24 @@ static u32 ge32(const u8 *p) {
 
 int main(int argc, char **argv) {
     const char *arc = NULL, *outdir = ".", *passwd = NULL, *dumpf = NULL;
-    int i;
+    int i, test_mode = 0;
     FILE *f; long fs; u8 *raw; u8 *data; u32 datasz;
-    u32 Atot, Bt, Cnt; int encrypted; u8 xk[4];
+    u32 Atot, Bt, Cnt, payload_size; int encrypted; u8 xk[4];
+    char pwb[256];
     BitRd br; u32 valsA[ALPHA_A], valsB[ALPHA_B]; u16 lensA[ALPHA_A], lensB[ALPHA_B];
     SymDecoder sA, sB; LzState st; u8 *outbuf;
-    u8 *table, *payload; u32 p, off;
+    u8 *table, *payload; u32 p;
     struct { u32 size; u32 ts; const char *name; } *ents;
+    unsigned __int64 sum;
 
     for (i = 1; i < argc; i++) {
         if (strncmp(argv[i], "-p", 2) == 0) passwd = argv[i] + 2;
         else if (strncmp(argv[i], "-d", 2) == 0) outdir = argv[i] + 2;
         else if (strncmp(argv[i], "-x", 2) == 0) dumpf = argv[i] + 2;
+        else if (strcmp(argv[i], "-t") == 0) test_mode = 1;
         else arc = argv[i];
     }
-    if (!arc) { fprintf(stderr, "usage: yzdec [-d<outdir>] [-p<password>] <archive.yz1>\n"); return 1; }
+    if (!arc) { fprintf(stderr, "usage: yzdec [-d<outdir>] [-p<password>] [-t] <archive.yz1>\n"); return 1; }
     f = fopen(arc, "rb");
     if (!f) die2("cannot open archive: ", arc);
     fseek(f, 0, SEEK_END); fs = ftell(f); rewind(f);
@@ -285,11 +304,23 @@ int main(int argc, char **argv) {
     if (datasz < 20 || memcmp(data, "yz0105", 6) != 0) die("bad archive (bad magic)");
     Atot = ge32(data + 8); Bt = ge32(data + 12); Cnt = ge32(data + 16);
     if (Atot > 0x10000000u) die("archive too large");
+    if (Bt > Atot) die("bad archive (header size > total size)");
+    if ((unsigned __int64)Cnt * 8u > (unsigned __int64)Bt) die("bad archive (file table too small)");
+    payload_size = Atot - Bt;
     encrypted = (data[6] & 0x04) != 0;
     if (encrypted) {
         u32 q;
-        if (!passwd) die("password protected: use -p");
+        if (!passwd || !passwd[0]) {
+            size_t l;
+            printf("InputPassword(1):\n");
+            if (!fgets(pwb, sizeof(pwb), stdin)) die("password was not input");
+            l = strlen(pwb);
+            while (l && (pwb[l - 1] == '\n' || pwb[l - 1] == '\r')) pwb[--l] = 0;
+            if (!l) die("password was not input");
+            passwd = pwb;
+        }
         derive_key(passwd, xk);
+        if (data[7] != pw_chk(passwd)) die("Password is not match !");
         for (q = 20; q < datasz; q++) data[q] ^= xk[(q - 20) & 3];
     }
     outbuf = (u8 *)calloc(Atot ? Atot : 1, 1);
@@ -302,14 +333,13 @@ int main(int argc, char **argv) {
     for (i = 0; i < ALPHA_B; i++) lensB[i] = (u16)br_read(&br, 5);
     if (dumpf) {
         FILE *tf = fopen(dumpf, "wb");
-        u32 tot_ = (u32)ALPHA_A + (u32)ALPHA_B;
         if (tf) {
-            u32 p;
+            u32 p_;
             u16 v;
             for (i = 0; i < ALPHA_A; i++) { v = (u16)lensA[i]; fwrite(&v, 2, 1, tf); }
             for (i = 0; i < ALPHA_B; i++) { v = (u16)lensB[i]; fwrite(&v, 2, 1, tf); }
-            p = br.pos * 8 - br.n; p = 0; (void)p;
-            fwrite(&p, 4, 1, tf);
+            p_ = br.pos * 8 - br.n; p_ = 0; (void)p_;
+            fwrite(&p_, 4, 1, tf);
             fclose(tf);
         }
     }
@@ -319,31 +349,52 @@ int main(int argc, char **argv) {
     sd_init(&sB, valsB, lensB, ALPHA_B);
 
     lz_reset(&st, outbuf);
-    lz_decompress(&br, &sA, &sB, Bt, &st);
+    if (!lz_decompress(&br, &sA, &sB, Bt, &st, Bt)) die("corrupt header stream");
     lz_reset(&st, outbuf + Bt);
-    lz_decompress(&br, &sA, &sB, Atot - Bt, &st);
+    if (!lz_decompress(&br, &sA, &sB, payload_size, &st, payload_size)) die("corrupt data stream");
     table = outbuf; payload = outbuf + Bt;
 
     ents = malloc(sizeof(*ents) * (size_t)(Cnt ? Cnt : 1));
-    { u32 np = 8 * Cnt;
-      for (i = 0; i < (int)Cnt; i++) {
-          ents[i].size = ge32(table + 4 * i);
-          ents[i].ts = ge32(table + 4 * Cnt + 4 * i);
-          ents[i].name = (const char *)(table + np);
-          np += (u32)strlen(ents[i].name) + 1;
-      }
-      if (np != Bt) fprintf(stderr, "yzdec: warning: table size mismatch (%d vs %d)\n", (int)np, (int)Bt);
+    if (!ents) die("oom file table");
+    {
+        u32 np = 8 * Cnt;
+        for (i = 0; i < (int)Cnt; i++) {
+            u32 l = 0;
+            ents[i].size = ge32(table + 4 * i);
+            ents[i].ts = ge32(table + 4 * Cnt + 4 * i);
+            if (np >= Bt) die("bad file table (name offset past end)");
+            while (np + l < Bt && table[np + l]) l++;
+            if (np + l >= Bt) die("bad file table (unterminated name)");
+            ents[i].name = (const char *)(table + np);
+            np += l + 1;
+        }
+        if (np != Bt) fprintf(stderr, "yzdec: warning: table size mismatch (%d vs %d)\n", (int)np, (int)Bt);
     }
+    sum = 0;
+    for (i = 0; i < (int)Cnt; i++) sum += ents[i].size;
+    if (sum > (unsigned __int64)payload_size) die("bad file table (sizes exceed data)");
+
+    if (test_mode) {
+        for (i = 0; i < (int)Cnt; i++)
+            printf("TestFile(%d/%d): %s (%d Bytes)\n", i + 1, (int)Cnt, ents[i].name, (int)ents[i].size);
+        printf("Extraction TEST has done.\n has no any errors. (%d file(s))\n", (int)Cnt);
+        free(ents); free(outbuf); free(st.T1); free(st.T2); free(raw);
+        sd_free(&sA); sd_free(&sB);
+        return 0;
+    }
+
     p = 0;
     for (i = 0; i < (int)Cnt; i++) {
         char path[1200];
         int r = _snprintf(path, sizeof(path), "%s\\%s", outdir, ents[i].name);
         if (r < 0 || r >= (int)sizeof(path)) die2("output path too long: ", ents[i].name);
+        if ((unsigned __int64)p + ents[i].size > (unsigned __int64)payload_size)
+            die("bad file table (file extends past data)");
         { char *s; for (s = path; *s; s++) if (*s == '/') *s = '\\'; }
         make_parents(path);
         write_file(path, payload + p, ents[i].size, ents[i].ts);
         p += ents[i].size;
-        printf("OutFile(i/C): %s (%d Bytes)\n", ents[i].name, (int)ents[i].size);
+        printf("OutFile(%d/%d): %s (%d Bytes)\n", i + 1, (int)Cnt, ents[i].name, (int)ents[i].size);
     }
     free(ents); free(outbuf); free(st.T1); free(st.T2); free(raw);
     sd_free(&sA); sd_free(&sB);

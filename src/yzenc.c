@@ -1,7 +1,10 @@
-/* yzenc.c - YZ1 v1.05.2 packer (plain mode), shaped after yzenc.exe sub_4014D0/sub_4021C0 */
+/* yzenc.c - YZ1 v1.05.2 packer (plain mode), shaped after yzenc.exe sub_4014D0/sub_4021C0.
+ * Default: all inputs go into one archive. -m: one archive per input (original behavior).
+ */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 #include <time.h>
 #include <sys/stat.h>
 #include <io.h>
@@ -410,10 +413,60 @@ static u8 *read_full(const char *path, u32 size) {
     return b;
 }
 
-int main(int argc, char **argv) {
-    const char *outdir = NULL;
-    const char *passwd = NULL;
-    const char *firstarg = NULL;
+static int has_yz1_ext(const char *p) {
+    size_t n = strlen(p);
+    return n >= 4 && p[n - 4] == '.'
+        && (p[n - 3] == 'y' || p[n - 3] == 'Y')
+        && (p[n - 2] == 'z' || p[n - 2] == 'Z')
+        && p[n - 1] == '1';
+}
+
+static int same_file(const char *a, const char *b) {
+    for (;;) {
+        int ca = (unsigned char)*a++, cb = (unsigned char)*b++;
+        if (ca == '/') ca = '\\';
+        if (cb == '/') cb = '\\';
+        ca = tolower(ca); cb = tolower(cb);
+        if (ca != cb) return 0;
+        if (!ca) return 1;
+    }
+}
+
+static int exists(const char *p) {
+    struct _stat st;
+    return _stat(p, &st) == 0;
+}
+
+/* EOF means yes, as in the 1.05.2 tools */
+static int ask_overwrite(const char *outname, int assume_yes) {
+    char buf[80];
+    if (assume_yes) { printf("All YES.\n"); return 1; }
+    printf("Question:\nFile(%s) has already existed.\nDo you write over this file? [y/n]:", outname);
+    fflush(stdout);
+    if (!fgets(buf, sizeof(buf), stdin)) return 1;
+    return !(buf[0] == 'n' || buf[0] == 'N');
+}
+
+/* output name: reference uses (outdir\) + arg after last backslash, ext -> .yz1 */
+static void make_outname(const char *arg, const char *outdir, char *out, size_t outsz) {
+    char top[1024];
+    const char *t = arg_top(arg);
+    size_t k, bl, dot;
+    const char *last = NULL;
+
+    strcpy(top, t);
+    for (k = 0; top[k]; k++) if (top[k] == '/') top[k] = '\\';
+    bl = strlen(top);
+    for (k = 0; k < bl; k++) if (top[k] == '.') last = top + k;
+    dot = last ? (size_t)(last - top) : bl;
+    if (outdir) _snprintf(out, outsz, "%s\\%.*s.yz1", outdir, (int)dot, top);
+    else        _snprintf(out, outsz, "%.*s.yz1", (int)dot, top);
+    out[outsz - 1] = 0;
+}
+
+static int pack(const char *const *args, int nargs, const char *outdir,
+                const char *passwd, int assume_yes)
+{
     char outname[1040];
     u32 Cnt, i;
     u32 Bt, Atot, off, nbyte, nbyte2;
@@ -427,47 +480,28 @@ int main(int argc, char **argv) {
     BW bw;
     FILE *f;
     u8 hd[20];
+    int k;
 
-    for (i = 1; i < argc; i++) {
-        if (strncmp(argv[i], "-d", 2) == 0) { outdir = argv[i] + 2; if (!outdir[0]) outdir = NULL; }
-        else if (strncmp(argv[i], "-p", 2) == 0) passwd = argv[i] + 2;
-        else if (strcmp(argv[i], "-y") == 0) { /* auto-confirm: no prompts anyway */ }
-        else if (!firstarg) firstarg = argv[i];
-        else add_any(argv[i]);
+    for (k = 0; k < nargs; k++) {
+        if (has_yz1_ext(args[k])) {
+            printf("Message(2039):\nFile(%s) which file-extension is '.yz1' cannot deal with.\nPlease change extension.\n", args[k]);
+            return -1;
+        }
     }
-    if (!firstarg) { fprintf(stderr, "usage: yzenc [-d<outdir>] [-p<password>] <file|dir> ...\n"); return 1; }
-    if (passwd && !passwd[0]) {
-        static char pwbuf[256];
-        size_t l;
-        printf("InputPassword(1):\n");
-        if (!fgets(pwbuf, sizeof(pwbuf), stdin)) return 1;
-        l = strlen(pwbuf);
-        while (l && (pwbuf[l - 1] == '\n' || pwbuf[l - 1] == '\r')) pwbuf[--l] = 0;
-        if (!l) { fprintf(stderr, "yzenc: empty password\n"); return 1; }
-        passwd = pwbuf;
-    }
-    add_any(firstarg);
 
-    /* output name: reference uses (outdir\) + arg after last backslash, ext -> .yz1 */
-    {
-        char top[1024];
-        const char *t = arg_top(firstarg);
-        size_t k;
-        strcpy(top, t);
-        for (k = 0; top[k]; k++) if (top[k] == '/') top[k] = '\\';
-        {
-            size_t bl = strlen(top), dot;
-            const char *last = NULL;
-            for (k = 0; k < bl; k++) if (top[k] == '.') last = top + k;
-            dot = last ? (size_t)(last - top) : bl;
-            if (outdir) { _snprintf(outname, sizeof(outname), "%s\\%.*s.yz1", outdir, (int)dot, top); outname[sizeof(outname) - 1] = 0; }
-            else { _snprintf(outname, sizeof(outname), "%.*s.yz1", (int)dot, top); outname[sizeof(outname) - 1] = 0; }
+    g_nent = 0;
+    for (k = 0; k < nargs; k++) add_any(args[k]);
+    if (g_nent == 0) { fprintf(stderr, "yzenc: no input files\n"); return 1; }
+
+    make_outname(args[0], outdir, outname, sizeof(outname));
+    for (i = 0; i < g_nent; i++) {
+        if (same_file(outname, g_ents[i].fs)) {
+            printf("Message(2040):\nCannot write over previous file(%s)\nPlease change a folder into which put compressed file.\n", outname);
+            return 1;
         }
     }
 
     Cnt = g_nent;
-    if (Cnt == 0) die("no input files");
-
     Bt = 8 * Cnt;
     for (i = 0; i < Cnt; i++) Bt += (u32)strlen(g_ents[i].path) + 1;
     Atot = Bt;
@@ -539,6 +573,12 @@ int main(int argc, char **argv) {
         }
     }
 
+    if (exists(outname) && !ask_overwrite(outname, assume_yes)) {
+        printf("Information(1042):\nProcess can not continue. Thus stopped. without output file(%s)\n", outname);
+        free(t1); free(t2); free(tabledata); free(payload); free(bw.buf);
+        return 0;
+    }
+
     /* header + write */
     nbyte = bw_bytes(&bw);
     memcpy(hd, "yz0105", 6);
@@ -557,10 +597,56 @@ int main(int argc, char **argv) {
     pe32(hd + 12, Bt);
     pe32(hd + 16, Cnt);
     f = fopen(outname, "wb");
-    if (!f) { fprintf(stderr, "yzenc: cannot write %s\n", outname); return 1; }
+    if (!f) {
+        fprintf(stderr, "yzenc: cannot write %s\n", outname);
+        free(t1); free(t2); free(tabledata); free(payload); free(bw.buf);
+        return 1;
+    }
     fwrite(hd, 1, 20, f);
     fwrite(bw.buf, 1, nbyte, f);
     fclose(f);
     printf("OutFile: %s (%d Bytes)\n", outname, (int)(20 + nbyte));
+    free(t1); free(t2); free(tabledata); free(payload); free(bw.buf);
     return 0;
+}
+
+int main(int argc, char **argv) {
+    const char *outdir = NULL;
+    const char *passwd = NULL;
+    const char **args;
+    int nargs = 0, multi = 0, assume_yes = 0, i, rc, failed = 0;
+    static char pwbuf[256];
+
+    args = (const char **)malloc(sizeof(*args) * (size_t)(argc > 0 ? argc : 1));
+    if (!args) die("oom args");
+
+    for (i = 1; i < argc; i++) {
+        if (strncmp(argv[i], "-d", 2) == 0) { outdir = argv[i] + 2; if (!outdir[0]) outdir = NULL; }
+        else if (strncmp(argv[i], "-p", 2) == 0) passwd = argv[i] + 2;
+        else if (strcmp(argv[i], "-y") == 0) assume_yes = 1;
+        else if (strcmp(argv[i], "-m") == 0) multi = 1;
+        else args[nargs++] = argv[i];
+    }
+    if (nargs == 0) {
+        fprintf(stderr, "usage: yzenc [-d<outdir>] [-p<password>] [-y] [-m] <file|dir> ...\n");
+        return 1;
+    }
+    if (passwd && !passwd[0]) {
+        size_t l;
+        printf("InputPassword(1):\n");
+        if (!fgets(pwbuf, sizeof(pwbuf), stdin)) return 1;
+        l = strlen(pwbuf);
+        while (l && (pwbuf[l - 1] == '\n' || pwbuf[l - 1] == '\r')) pwbuf[--l] = 0;
+        if (!l) { fprintf(stderr, "yzenc: empty password\n"); return 1; }
+        passwd = pwbuf;
+    }
+
+    if (multi) {
+        for (i = 0; i < nargs; i++) {
+            rc = pack(&args[i], 1, outdir, passwd, assume_yes);
+            if (rc != 0) failed = 1;
+        }
+        return failed;
+    }
+    return pack(args, nargs, outdir, passwd, assume_yes) == 0 ? 0 : 1;
 }
