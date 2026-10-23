@@ -1,0 +1,566 @@
+/* yzenc.c - YZ1 v1.05.2 packer (plain mode), shaped after yzenc.exe sub_4014D0/sub_4021C0 */
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+#include <sys/stat.h>
+#include <io.h>
+
+typedef unsigned char  u8;
+typedef unsigned short u16;
+typedef unsigned int   u32;
+
+#define ALPHA_A 768
+#define ALPHA_B 128
+#define RING    256
+
+static void die(const char *m) { fprintf(stderr, "yzenc: %s\n", m); exit(1); }
+
+/* ---------------- password key derivation (sub_4015EA) ---------------- */
+static void derive_key(const char *pw, u8 key[4]) {
+    const u8 *b = (const u8 *)pw; u32 n = (u32)strlen(pw);
+    u32 v100 = n, v101 = n, v34 = n, inc = n;
+    u32 idx;
+    for (idx = 0; idx < n; idx++) {
+        u32 ch = (u32)(int)(signed char)b[idx], v36;
+        v36 = (ch ^ idx);
+        v34 = (v34 + v36);
+        v100 = (v100 - v36);
+        v101 ^= v36;
+        inc = (inc * v36);
+    }
+    { u32 v37 = v101 + inc + v34 * v100;
+      key[0] = (u8)(v37 >> 24); key[1] = (u8)(v37 >> 16);
+      key[2] = (u8)(v37 >> 8);  key[3] = (u8)(v37 & 0xFF); }
+}
+
+/* header chk byte: (sum of (pw[i] ^ i) + len) & 0xFF */
+static u8 pw_chk(const char *pw) {
+    const u8 *b = (const u8 *)pw;
+    u32 n = (u32)strlen(pw), i, s = 0;
+    for (i = 0; i < n; i++) s += (u32)(b[i] ^ (u8)i);
+    return (u8)((s + n) & 0xFF);
+}
+
+/* ---------------- bit writer (MSB first) ---------------- */
+typedef struct { u8 *buf; u32 cap, nbits; } BW;
+
+static void bw_new(BW *b) {
+    b->cap = 1u << 16;
+    b->buf = (u8 *)calloc(b->cap, 1);
+    b->nbits = 0;
+    if (!b->buf) die("oom bw");
+}
+static void bw_grow(BW *b, u32 need) {
+    u8 *nb;
+    if (need <= b->cap) return;
+    while (b->cap < need) b->cap <<= 1;
+    nb = (u8 *)realloc(b->buf, b->cap);
+    if (!nb) die("oom bw");
+    b->buf = nb;
+}
+static void bw_bit(BW *b, int bit) {
+    u32 pos = b->nbits++;
+    if ((pos >> 3) + 1 > b->cap) bw_grow(b, (pos >> 3) + 1);
+    if (bit) b->buf[pos >> 3] |= (u8)(0x80 >> (pos & 7));
+}
+static void bw_bits(BW *b, u32 v, int n) {
+    int k;
+    for (k = n - 1; k >= 0; k--) bw_bit(b, (v >> k) & 1);
+}
+static u32 bw_bytes(BW *b) { return (b->nbits + 7) >> 3; }
+
+/* ---------------- Huffman builder (yzenc sub_4021C0) ---------------- */
+typedef struct { u32 value; u16 symbol; u16 next; } Node;
+
+static int node_cmp_asc(const void *pa, const void *pb) {
+    const Node *a = (const Node *)pa, *b = (const Node *)pb;
+    u32 da, db;
+    if (a->value != b->value) return a->value < b->value ? -1 : 1;
+    da = (u32)a->symbol | ((u32)a->next << 16);
+    db = (u32)b->symbol | ((u32)b->next << 16);
+    return da < db ? -1 : (da > db ? 1 : 0);
+}
+
+/* pass-A qsort uses PtFuncCompare: -1 iff b < a  ->  descending */
+static int node_cmp_desc(const void *pa, const void *pb) {
+    const Node *a = (const Node *)pa, *b = (const Node *)pb;
+    u32 da, db;
+    if (a->value != b->value) return a->value > b->value ? -1 : 1;
+    da = (u32)a->symbol | ((u32)a->next << 16);
+    db = (u32)b->symbol | ((u32)b->next << 16);
+    return da > db ? -1 : (da < db ? 1 : 0);
+}
+
+/* pass A: freqs -> code lengths (insert shifts past equal: stops on >) */
+static void huff_lens(const u32 *freq, int N, u16 *lens) {
+    Node *nodes = (Node *)malloc(sizeof(Node) * (size_t)N);
+    int i;
+    if (!nodes) die("oom nodes");
+    for (i = 0; i < N; i++) { nodes[i].value = freq[i]; nodes[i].symbol = (u16)i; nodes[i].next = 0xFFFF; lens[i] = 0; }
+    qsort(nodes, (size_t)N, sizeof(Node), node_cmp_desc);
+    for (i = N - 2; i >= 0; i--) {
+        u16 c = (u16)i, sym;
+        u32 sv; u32 sd; int ecx;
+        for (;;) {
+            sym = nodes[c].symbol;
+            lens[sym]++;
+            if (nodes[c].next == 0xFFFF) break;
+            c = nodes[c].next;
+        }
+        sym = nodes[i + 1].symbol;
+        lens[sym]++;
+        c = nodes[i + 1].next;
+        while (c != 0xFFFF) {
+            sym = nodes[c].symbol;
+            lens[sym]++;
+            c = nodes[c].next;
+        }
+        c = (u16)i;
+        while (nodes[c].next != 0xFFFF) c = nodes[c].next;
+        nodes[c].next = (u16)(i + 1);
+        nodes[i].value += nodes[i + 1].value;
+        sv = nodes[i].value;
+        sd = (u32)nodes[i].symbol | ((u32)nodes[i].next << 16);
+        ecx = i - 1;
+        while (ecx >= 0 && nodes[ecx].value <= sv) { nodes[ecx + 1] = nodes[ecx]; ecx--; }
+        nodes[ecx + 1].value = sv;
+        nodes[ecx + 1].symbol = (u16)(sd & 0xFFFF);
+        nodes[ecx + 1].next = (u16)(sd >> 16);
+    }
+    free(nodes);
+}
+
+/* pass B: lengths -> left-aligned code values (identical to decoder builder) */
+static void build_codes(const u16 *in_lengths, int N, u32 *vals, u16 *clens) {
+    Node *nodes = (Node *)malloc(sizeof(Node) * (size_t)N);
+    int i;
+    if (!nodes) die("oom nodes");
+    for (i = 0; i < N; i++) { nodes[i].value = in_lengths[i]; nodes[i].symbol = (u16)i; nodes[i].next = 0xFFFF; vals[i] = 0; clens[i] = 0; }
+    qsort(nodes, (size_t)N, sizeof(Node), node_cmp_asc);
+    for (i = N - 2; i >= 0; i--) {
+        u16 c = (u16)i;
+        u32 sv; u32 sd; int ecx;
+        for (;;) {
+            u16 sym = nodes[c].symbol;
+            clens[sym]++;
+            vals[sym] >>= 1;
+            if (nodes[c].next == 0xFFFF) break;
+            c = nodes[c].next;
+        }
+        { u16 sym = nodes[i + 1].symbol;
+          clens[sym]++;
+          vals[sym] = (vals[sym] >> 1) | 0x80000000u; }
+        c = nodes[i + 1].next;
+        while (c != 0xFFFF) {
+            u16 sym = nodes[c].symbol;
+            clens[sym]++;
+            vals[sym] = (vals[sym] >> 1) | 0x80000000u;
+            c = nodes[c].next;
+        }
+        c = (u16)i;
+        while (nodes[c].next != 0xFFFF) c = nodes[c].next;
+        nodes[c].next = (u16)(i + 1);
+        nodes[i].value -= 1;
+        sv = nodes[i].value;
+        sd = (u32)nodes[i].symbol | ((u32)nodes[i].next << 16);
+        ecx = i - 1;
+        while (ecx >= 0 && nodes[ecx].value >= sv) { nodes[ecx + 1] = nodes[ecx]; ecx--; }
+        nodes[ecx + 1].value = sv;
+        nodes[ecx + 1].symbol = (u16)(sd & 0xFFFF);
+        nodes[ecx + 1].next = (u16)(sd >> 16);
+    }
+    free(nodes);
+}
+
+static void huff_build(const u32 *freq, int N, u32 *vals, u16 *lens) {
+    int i;
+    u32 mx = 0;
+    huff_lens(freq, N, lens);
+    for (i = 0; i < N; i++) if (lens[i] > mx) mx = lens[i];
+    if (mx >= 32) die("code length overflow");
+    build_codes(lens, N, vals, lens);
+}
+
+/* ---------------- LZ pass (yzenc sub_4014D0) ---------------- */
+typedef struct {
+    u16 asy;      /* A-stream symbol: literal 512+b, match 0..255, family 256..511 */
+    u32 mclass;   /* match class (len-2), valid when asy < 256 */
+    u8  ismatch;
+} Tok;
+
+typedef struct {
+    const u8 *data;
+    u32 p, h;
+    u16 A[RING], B[RING];
+    u16 heads[RING * RING];
+    u16 nxt[RING * RING];
+    u16 prv[RING * RING];
+    u32 T1v[RING * RING];   /* pass-local chunk-start offsets; 0 = empty */
+    u16 T2v[RING * RING];
+} LZ;
+
+static void lz_reset(LZ *s) {
+    memset(s->A, 0, sizeof(s->A));
+    memset(s->B, 0, sizeof(s->B));
+    memset(s->heads, 0xFF, sizeof(s->heads));
+    memset(s->nxt, 0xFF, sizeof(s->nxt));
+    memset(s->prv, 0xFF, sizeof(s->prv));
+    memset(s->T1v, 0, sizeof(s->T1v));
+    memset(s->T2v, 0, sizeof(s->T2v));
+    s->h = 0;
+}
+
+static void chain_unlink(LZ *s, u32 row, u16 a) {
+    u16 n = s->nxt[row | a], v = s->prv[row | a];
+    if (n != 0xFFFF) s->prv[row | n] = v;
+    if (v == 0xFFFF) {
+        u32 off = s->T1v[row | a];
+        if (off) s->heads[((row >> 8) << 8) | s->data[off]] = n;
+    } else {
+        s->nxt[row | v] = n;
+    }
+}
+
+static void chain_link(LZ *s, u32 row, u16 a) {
+    u32 c = row >> 8;
+    u16 b = s->heads[(c << 8) | s->data[s->T1v[row | a]]];
+    if (b != 0xFFFF) s->prv[row | b] = a;
+    s->nxt[row | a] = b;
+    s->prv[row | a] = 0xFFFF;
+    s->heads[(c << 8) | s->data[s->T1v[row | a]]] = a;
+}
+
+static void lz_pass(LZ *s, const u8 *data, u32 len, u32 *freqA, u32 *freqB,
+                    Tok **toks, u32 *ntok, u32 *cap) {
+    u32 p = 0;
+    s->data = data;
+    lz_reset(s);
+    if (len == 0) return;
+    for (;;) {
+        u32 ml = 0, best = 0, chunklen, p_start = p, srcdbg = 0;
+        Tok *tk;
+        if (*ntok == *cap) {
+            *cap = *cap * 2 + 256;
+            *toks = (Tok *)realloc(*toks, sizeof(Tok) * (size_t)*cap);
+            if (!*toks) die("oom toks");
+        }
+        tk = &(*toks)[(*ntok)++];
+
+        if (p >= 1) {
+            u32 q = data[p - 1];
+            u32 row = q << 8;
+            u32 a0 = s->A[q];
+            if (s->B[q] != 0) {
+                u32 i = s->heads[(q << 8) | data[p]];
+                while (!(i & 0x8000)) {
+                    u32 src = s->T1v[row | i];
+                    if (data[src + ml] == data[p + ml]) {
+                        u32 k, j, rem = len - p;
+                        int ok = 1;
+                        for (k = ml; k > 0; ) {
+                            k--;
+                            if (data[src + k] != data[p + k]) { ok = 0; break; }
+                        }
+                        if (ok) {
+                            j = ml + 1;
+                            while (j < rem && data[src + j] == data[p + j]) j++;
+                            best = i; ml = j; srcdbg = src;
+                            if (j >= rem) break;
+                        }
+                    }
+                    i = s->nxt[row | i];
+                }
+            }
+        if (ml >= 2) {
+            u32 delta = (RING + best - a0) % RING;
+            int fam = (s->T2v[row | best] == (u16)ml);
+            if (fam) {
+                    tk->asy = (u16)(256 + delta);
+                    tk->ismatch = 0;
+                    freqA[tk->asy]++;
+                    if (s->T1v[row | a0]) {
+                        chain_unlink(s, row, (u16)best);
+                        s->T1v[row | best] = s->T1v[row | a0];
+                        s->T2v[row | best] = s->T2v[row | a0];
+                        chain_link(s, row, (u16)best);
+                    }
+                } else {
+                    tk->asy = (u16)delta;
+                    tk->ismatch = 1;
+                    tk->mclass = ml - 2;
+                    freqA[tk->asy]++;
+                    freqB[ml - 2 >= 127 ? 127 : ml - 2]++;
+                }
+                chunklen = ml;
+                p += ml;
+            } else {
+                tk->asy = (u16)(512 + data[p]);
+                tk->ismatch = 0;
+                freqA[tk->asy]++;
+                chunklen = ml;   /* 0 (no match) or 1 (len-1 candidate) */
+                p += 1;
+            }
+        } else {
+            tk->asy = (u16)(512 + data[p]);
+            tk->ismatch = 0;
+            freqA[tk->asy]++;
+            chunklen = 0;
+            p += 1;
+        }
+
+        /* ring update: if (p - 1 > h) */
+        if (p - 1 > s->h) {
+            u32 cc = data[s->h];
+            u32 rr = cc << 8;
+            u16 a = s->A[cc];
+            chain_unlink(s, rr, a);
+            s->T1v[rr | a] = s->h + 1;
+            s->T2v[rr | a] = (u16)chunklen;
+            chain_link(s, rr, a);
+            s->A[cc] = (u16)(a + 1);
+            if (s->B[cc] < s->A[cc]) s->B[cc] = s->A[cc];
+            s->A[cc] = (u16)(s->A[cc] % RING);
+            s->h = p - 1;
+        }
+        if (getenv("YZENCDBG")) {
+            u32 asy = tk->asy;
+            if (asy >= 512) fprintf(stderr, "ENC p=%u LIT b=0x%02X ml=%u\n", p_start, asy & 0xFF, ml);
+            else if (ml >= 2) fprintf(stderr, "ENC p=%u %s sym=%u class=%u len=%u src=%u\n", p_start, asy >= 256 ? "FAM" : "MAT", asy, tk->mclass, ml, srcdbg);
+            else fprintf(stderr, "ENC p=%u LIT b=0x%02X ml=%u\n", p_start, asy & 0xFF, ml);
+        }
+        if (p >= len) break;
+    }
+}
+
+/* ---------------- input collection ---------------- */
+typedef struct { char fs[1024]; char path[1024]; u32 size; u32 ts; } Ent;
+
+static Ent *g_ents; static u32 g_nent, g_cap;
+
+static void add_ent(const char *fspath, const char *disp, u32 size, u32 ts) {
+    if (g_nent == g_cap) {
+        g_cap = g_cap * 2 + 32;
+        g_ents = (Ent *)realloc(g_ents, sizeof(Ent) * (size_t)g_cap);
+        if (!g_ents) die("oom ents");
+    }
+    if (strlen(fspath) >= sizeof(g_ents[0].fs)) { fprintf(stderr, "yzenc: path too long: %s\n", fspath); exit(1); }
+    if (strlen(disp) >= sizeof(g_ents[0].path)) { fprintf(stderr, "yzenc: name too long: %s\n", disp); exit(1); }
+    strcpy(g_ents[g_nent].fs, fspath);
+    strcpy(g_ents[g_nent].path, disp);
+    g_ents[g_nent].size = size;
+    g_ents[g_nent].ts = ts;
+    g_nent++;
+}
+
+static void add_dir2(const char *fspath, const char *prefix);   /* forward */
+
+static void add_file2(const char *fspath, const char *disp) {
+    struct _stat st;
+    if (_stat(fspath, &st) != 0) { fprintf(stderr, "yzenc: cannot stat %s\n", fspath); exit(1); }
+    add_ent(fspath, disp, (u32)st.st_size, (u32)st.st_mtime);
+}
+
+static void add_dir2(const char *fspath, const char *prefix) {
+    char sub[1032];
+    long h;
+    struct _finddata_t fd;
+    sprintf(sub, "%s\\*", fspath);
+    h = _findfirst(sub, &fd);
+    if (h == -1) { fprintf(stderr, "yzenc: cannot list dir %s\n", fspath); exit(1); }
+    do {
+        if (fd.name[0] == '.') continue;
+        {
+            char fp[1024], dp[1024];
+            sprintf(fp, "%s\\%s", fspath, fd.name);
+            sprintf(dp, "%s\\%s", prefix, fd.name);
+            if (fd.attrib & _A_SUBDIR) add_dir2(fp, dp);
+            else add_file2(fp, dp);
+        }
+    } while (_findnext(h, &fd) == 0);
+    _findclose(h);
+}
+
+/* reference strips only backslash-separated directories from the stored name */
+static const char *arg_top(const char *arg) {
+    const char *p, *top = arg;
+    for (p = arg; *p; p++) if (*p == '\\') top = p + 1;
+    return top;
+}
+
+static void add_any(const char *arg) {
+    struct _stat st;
+    const char *top = arg_top(arg);
+    if (_stat(arg, &st) != 0) { fprintf(stderr, "yzenc: cannot stat %s\n", arg); exit(1); }
+    if (st.st_mode & _S_IFDIR) add_dir2(arg, top);
+    else add_file2(arg, top);
+}
+
+/* ---------------- misc ---------------- */
+static void pe32(u8 *d, u32 v) { d[0] = (u8)(v >> 24); d[1] = (u8)(v >> 16); d[2] = (u8)(v >> 8); d[3] = (u8)v; }
+
+static u8 *read_full(const char *path, u32 size) {
+    FILE *f = fopen(path, "rb");
+    u8 *b;
+    if (!f) { fprintf(stderr, "yzenc: cannot open %s\n", path); exit(1); }
+    b = (u8 *)malloc(size ? size : 1);
+    if (!b) die("oom");
+    if (size && fread(b, 1, size, f) != size) { fprintf(stderr, "yzenc: short read %s\n", path); exit(1); }
+    fclose(f);
+    return b;
+}
+
+int main(int argc, char **argv) {
+    const char *outdir = NULL;
+    const char *passwd = NULL;
+    const char *firstarg = NULL;
+    char outname[1040];
+    u32 Cnt, i;
+    u32 Bt, Atot, off, nbyte, nbyte2;
+    u8 *tabledata, *payload;
+    u32 nt1 = 0, nt2 = 0, cap1 = 0, cap2 = 0;
+    Tok *t1 = NULL, *t2 = NULL;
+    u32 freqA[ALPHA_A], freqB[ALPHA_B];
+    u32 valsA[ALPHA_A], valsB[ALPHA_B];
+    u16 lensA[ALPHA_A], lensB[ALPHA_B];
+    static LZ lz;
+    BW bw;
+    FILE *f;
+    u8 hd[20];
+
+    for (i = 1; i < argc; i++) {
+        if (strncmp(argv[i], "-d", 2) == 0) { outdir = argv[i] + 2; if (!outdir[0]) outdir = NULL; }
+        else if (strncmp(argv[i], "-p", 2) == 0) passwd = argv[i] + 2;
+        else if (strcmp(argv[i], "-y") == 0) { /* auto-confirm: no prompts anyway */ }
+        else if (!firstarg) firstarg = argv[i];
+        else add_any(argv[i]);
+    }
+    if (!firstarg) { fprintf(stderr, "usage: yzenc [-d<outdir>] [-p<password>] <file|dir> ...\n"); return 1; }
+    if (passwd && !passwd[0]) {
+        static char pwbuf[256];
+        size_t l;
+        printf("InputPassword(1):\n");
+        if (!fgets(pwbuf, sizeof(pwbuf), stdin)) return 1;
+        l = strlen(pwbuf);
+        while (l && (pwbuf[l - 1] == '\n' || pwbuf[l - 1] == '\r')) pwbuf[--l] = 0;
+        if (!l) { fprintf(stderr, "yzenc: empty password\n"); return 1; }
+        passwd = pwbuf;
+    }
+    add_any(firstarg);
+
+    /* output name: reference uses (outdir\) + arg after last backslash, ext -> .yz1 */
+    {
+        char top[1024];
+        const char *t = arg_top(firstarg);
+        size_t k;
+        strcpy(top, t);
+        for (k = 0; top[k]; k++) if (top[k] == '/') top[k] = '\\';
+        {
+            size_t bl = strlen(top), dot;
+            const char *last = NULL;
+            for (k = 0; k < bl; k++) if (top[k] == '.') last = top + k;
+            dot = last ? (size_t)(last - top) : bl;
+            if (outdir) { _snprintf(outname, sizeof(outname), "%s\\%.*s.yz1", outdir, (int)dot, top); outname[sizeof(outname) - 1] = 0; }
+            else { _snprintf(outname, sizeof(outname), "%.*s.yz1", (int)dot, top); outname[sizeof(outname) - 1] = 0; }
+        }
+    }
+
+    Cnt = g_nent;
+    if (Cnt == 0) die("no input files");
+
+    Bt = 8 * Cnt;
+    for (i = 0; i < Cnt; i++) Bt += (u32)strlen(g_ents[i].path) + 1;
+    Atot = Bt;
+    for (i = 0; i < Cnt; i++) Atot += g_ents[i].size;
+
+    /* table data: [sizes x C][timestamps x C][names, NUL separated] */
+    tabledata = (u8 *)malloc(Bt ? Bt : 1);
+    if (!tabledata) die("oom table");
+    off = 0;
+    for (i = 0; i < Cnt; i++) { pe32(tabledata + off, g_ents[i].size); off += 4; }
+    for (i = 0; i < Cnt; i++) { pe32(tabledata + off, g_ents[i].ts); off += 4; }
+    for (i = 0; i < Cnt; i++) {
+        u32 l = (u32)strlen(g_ents[i].path) + 1;
+        memcpy(tabledata + off, g_ents[i].path, l);
+        off += l;
+    }
+    if (off != Bt) die("table size internal error");
+
+    /* payload concat */
+    payload = (u8 *)malloc(Atot - Bt ? (Atot - Bt) : 1);
+    if (!payload) die("oom payload");
+    nbyte2 = 0;
+    for (i = 0; i < Cnt; i++) {
+        u8 *fb = read_full(g_ents[i].fs, g_ents[i].size);
+        memcpy(payload + nbyte2, fb, g_ents[i].size);
+        nbyte2 += g_ents[i].size;
+        free(fb);
+    }
+
+    /* two passes over table then payload, shared freq tables */
+    memset(freqA, 0, sizeof(freqA));
+    memset(freqB, 0, sizeof(freqB));
+    lz_pass(&lz, tabledata, Bt, freqA, freqB, &t1, &nt1, &cap1);
+    lz_pass(&lz, payload, Atot - Bt, freqA, freqB, &t2, &nt2, &cap2);
+
+    /* build Huffman tables once for both passes */
+    huff_build(freqA, ALPHA_A, valsA, lensA);
+    huff_build(freqB, ALPHA_B, valsB, lensB);
+
+    /* emit stream: lensA, lensB, pass1 tokens, pass2 tokens */
+    bw_new(&bw);
+    for (i = 0; i < ALPHA_A; i++) bw_bits(&bw, lensA[i], 5);
+    for (i = 0; i < ALPHA_B; i++) bw_bits(&bw, lensB[i], 5);
+    {
+        u32 pass;
+        for (pass = 0; pass < 2; pass++) {
+            Tok *tv = pass ? t2 : t1;
+            u32 nv = pass ? nt2 : nt1;
+            u32 j;
+            for (j = 0; j < nv; j++) {
+                u16 sym = tv[j].asy;
+                u32 L = lensA[sym];
+                bw_bits(&bw, L ? (valsA[sym] >> (32 - L)) : 0, L);   /* L >= 1 for used syms */
+                if (tv[j].ismatch) {
+                    u32 cls = tv[j].mclass;
+                    if (cls < 127) {
+                        u32 LB = lensB[cls];
+                        bw_bits(&bw, valsB[cls] >> (32 - LB), LB);
+                    } else {
+                        u32 LB = lensB[127];
+                        u32 e = 31, x = cls;
+                        bw_bits(&bw, valsB[127] >> (32 - LB), LB);
+                        while (!(x & 0x80000000u)) { x <<= 1; e--; }
+                        bw_bits(&bw, e, 5);
+                        bw_bits(&bw, cls, (int)e + 1);
+                    }
+                }
+            }
+        }
+    }
+
+    /* header + write */
+    nbyte = bw_bytes(&bw);
+    memcpy(hd, "yz0105", 6);
+    if (passwd) {
+        u8 key[4];
+        u32 k;
+        derive_key(passwd, key);
+        for (k = 0; k < nbyte; k++) bw.buf[k] ^= key[k & 3];
+        hd[6] = 0x34;
+        hd[7] = pw_chk(passwd);
+    } else {
+        hd[6] = 0x30;
+        hd[7] = 0x30;
+    }
+    pe32(hd + 8, Atot);
+    pe32(hd + 12, Bt);
+    pe32(hd + 16, Cnt);
+    f = fopen(outname, "wb");
+    if (!f) { fprintf(stderr, "yzenc: cannot write %s\n", outname); return 1; }
+    fwrite(hd, 1, 20, f);
+    fwrite(bw.buf, 1, nbyte, f);
+    fclose(f);
+    printf("OutFile: %s (%d Bytes)\n", outname, (int)(20 + nbyte));
+    return 0;
+}
