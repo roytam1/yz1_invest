@@ -281,6 +281,7 @@ friend class yzDLLArcHeaderHandler;	// Ÿè‚É‰ü‘¢ by K.INABA
     private: long  dec_head_size  ; // 3: HeaderSize(4)
     private: long  dec_file_count ; // 4: FileCount(4)
     private: long  dec_data_size  ;
+    private: bool  payload_ready  ;
 
 
 	//-------------------------------------------------------------------

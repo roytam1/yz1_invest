@@ -23,6 +23,10 @@ unsigned char pw_chk(const char * password);
 bool parse_pub_password(const char * password, unsigned char key[4], unsigned char * chk);
 void make_pub_password(const unsigned char key[4], unsigned char chk, char * out, size_t out_size);
 
+bool decompress_header(const unsigned char * body, size_t body_size,
+                       size_t head_size,
+                       unsigned char * out, char * err, size_t err_size);
+
 bool decompress(const unsigned char * body, size_t body_size,
                 size_t head_size, size_t total_size,
                 unsigned char * out, char * err, size_t err_size);

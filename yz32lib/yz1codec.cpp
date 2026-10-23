@@ -300,9 +300,10 @@ static void lz_in_reset(LzIn * st, u8 * out)
 }
 
 static bool lz_decompress(BitRd * br, const SymDecoder * sA, const SymDecoder * sB,
-                          u32 need, LzIn * st)
+                          u32 need, LzIn * st, u32 cap)
 {
     u32 limit = st->outpos + need;
+    if (need > cap - st->outpos) return false;
     while (st->outpos < limit) {
         int sym;
         u32 src = 0, ml = 1;
@@ -310,9 +311,13 @@ static bool lz_decompress(BitRd * br, const SymDecoder * sA, const SymDecoder * 
         if (sym >= 512) {
             st->out[st->outpos++] = (u8)(sym - 512);
         } else {
-            u8 c = st->out[st->h];
-            u16 a0 = st->A[c];
-            u32 slot = ((u32)(sym & 0xFF) + a0) & 0xFF;
+            u8 c;
+            u16 a0;
+            u32 slot;
+            if (st->h >= st->outpos) return false;
+            c = st->out[st->h];
+            a0 = st->A[c];
+            slot = ((u32)(sym & 0xFF) + a0) & 0xFF;
             if (sym >= 256) {
                 ml = st->T2[c * RING + slot];
                 src = st->T1[c * RING + slot];
@@ -335,6 +340,8 @@ static bool lz_decompress(BitRd * br, const SymDecoder * sA, const SymDecoder * 
                 ml = (u32)(lc + 2);
                 src = st->T1[c * RING + slot];
             }
+            if (!ml || src >= st->outpos) return false;
+            if (ml > cap - st->outpos) return false;
             {
                 u32 i;
                 for (i = 0; i < ml; i++) st->out[st->outpos + i] = st->out[src + i];
@@ -356,16 +363,74 @@ static bool lz_decompress(BitRd * br, const SymDecoder * sA, const SymDecoder * 
     return true;
 }
 
+static bool read_code_tables(BitRd * br, SymDecoder * sA, SymDecoder * sB,
+                             char * err, size_t err_size)
+{
+    u32 valsA[ALPHA_A], valsB[ALPHA_B];
+    u16 lensA[ALPHA_A], lensB[ALPHA_B];
+    int i;
+
+    for (i = 0; i < ALPHA_A; i++) {
+        int v;
+        if (!br_read(br, 5, &v)) { set_err(err, err_size, "truncated length table"); return false; }
+        lensA[i] = (u16)v;
+    }
+    for (i = 0; i < ALPHA_B; i++) {
+        int v;
+        if (!br_read(br, 5, &v)) { set_err(err, err_size, "truncated length table"); return false; }
+        lensB[i] = (u16)v;
+    }
+    build_codes(lensA, ALPHA_A, valsA, lensA);
+    build_codes(lensB, ALPHA_B, valsB, lensB);
+    if (!sd_init(sA, valsA, lensA, ALPHA_A) || !sd_init(sB, valsB, lensB, ALPHA_B)) {
+        set_err(err, err_size, "out of memory");
+        sd_free(sA); sd_free(sB);
+        return false;
+    }
+    return true;
+}
+
+bool decompress_header(const unsigned char * body, size_t body_size,
+                       size_t head_size,
+                       unsigned char * out, char * err, size_t err_size)
+{
+    BitRd br;
+    SymDecoder sA, sB;
+    LzIn st;
+    bool ok = false;
+
+    memset(&sA, 0, sizeof(sA));
+    memset(&sB, 0, sizeof(sB));
+    st.T1 = 0; st.T2 = 0;
+
+    br.d = body; br.len = (u32)body_size; br.pos = 0; br.acc = 0; br.n = 0;
+    if (!read_code_tables(&br, &sA, &sB, err, err_size)) return false;
+    st.T1 = (u32 *)calloc(RING * RING, sizeof(u32));
+    st.T2 = (u32 *)calloc(RING * RING, sizeof(u32));
+    if (!st.T1 || !st.T2) {
+        set_err(err, err_size, "out of memory");
+        goto done;
+    }
+    lz_in_reset(&st, out);
+    if (!lz_decompress(&br, &sA, &sB, (u32)head_size, &st, (u32)head_size)) {
+        set_err(err, err_size, "corrupted header stream");
+        goto done;
+    }
+    ok = true;
+
+done:
+    free(st.T1); free(st.T2);
+    sd_free(&sA); sd_free(&sB);
+    return ok;
+}
+
 bool decompress(const unsigned char * body, size_t body_size,
                 size_t head_size, size_t total_size,
                 unsigned char * out, char * err, size_t err_size)
 {
     BitRd br;
-    u32 valsA[ALPHA_A], valsB[ALPHA_B];
-    u16 lensA[ALPHA_A], lensB[ALPHA_B];
     SymDecoder sA, sB;
     LzIn st;
-    int i;
     bool ok = false;
 
     memset(&sA, 0, sizeof(sA));
@@ -375,24 +440,7 @@ bool decompress(const unsigned char * body, size_t body_size,
     if (total_size < head_size) { set_err(err, err_size, "bad sizes"); return false; }
 
     br.d = body; br.len = (u32)body_size; br.pos = 0; br.acc = 0; br.n = 0;
-    for (i = 0; i < ALPHA_A; i++) {
-        int v;
-        if (!br_read(&br, 5, &v)) { set_err(err, err_size, "truncated length table"); return false; }
-        lensA[i] = (u16)v;
-    }
-    for (i = 0; i < ALPHA_B; i++) {
-        int v;
-        if (!br_read(&br, 5, &v)) { set_err(err, err_size, "truncated length table"); return false; }
-        lensB[i] = (u16)v;
-    }
-
-    build_codes(lensA, ALPHA_A, valsA, lensA);
-    build_codes(lensB, ALPHA_B, valsB, lensB);
-    if (!sd_init(&sA, valsA, lensA, ALPHA_A) || !sd_init(&sB, valsB, lensB, ALPHA_B)) {
-        set_err(err, err_size, "out of memory");
-        sd_free(&sA); sd_free(&sB);
-        return false;
-    }
+    if (!read_code_tables(&br, &sA, &sB, err, err_size)) return false;
     st.T1 = (u32 *)calloc(RING * RING, sizeof(u32));
     st.T2 = (u32 *)calloc(RING * RING, sizeof(u32));
     if (!st.T1 || !st.T2) {
@@ -401,12 +449,13 @@ bool decompress(const unsigned char * body, size_t body_size,
     }
 
     lz_in_reset(&st, out);
-    if (!lz_decompress(&br, &sA, &sB, (u32)head_size, &st)) {
+    if (!lz_decompress(&br, &sA, &sB, (u32)head_size, &st, (u32)head_size)) {
         set_err(err, err_size, "corrupted header stream");
         goto done;
     }
     lz_in_reset(&st, out + head_size);
-    if (!lz_decompress(&br, &sA, &sB, (u32)(total_size - head_size), &st)) {
+    if (!lz_decompress(&br, &sA, &sB, (u32)(total_size - head_size), &st,
+                       (u32)(total_size - head_size))) {
         set_err(err, err_size, "corrupted data stream");
         goto done;
     }
