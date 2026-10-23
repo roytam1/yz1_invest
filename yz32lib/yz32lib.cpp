@@ -574,7 +574,7 @@ int yzFileEncode::EncodeFile(const char * in_file_name)
         e.mtime = (time_t)st.st_mtime;
         ents.push_back(e);
     }
-    if (ents.empty()) {
+    if (ents.empty() && (st.st_mode & _S_IFDIR) == 0) {
         evEX(yzm, YZ_MSG_TBL_91, YZ_MSG_NO_91, in_file_name);
         return -1;
     }
@@ -662,6 +662,10 @@ int yzFileEncode::EncodeFile(const char * in_file_name)
             return -1;
         }
         payload += data;
+        if (yzm) {
+            yzm->gauge_String(ents[i].name.c_str());
+            yzm->gauge_Value((int)((i + 1) * 1000 / ents.size()), 0);
+        }
     }
 
     if (!yz1codec::compress((const unsigned char *)table.data(), Bt,
