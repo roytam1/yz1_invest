@@ -48,6 +48,15 @@ static u8 pw_chk(const char *pw) {
     return (u8)((s + n) & 0xFF);
 }
 
+/* "pub-xxxx-xxxx-xxxx" carries the 4 key bytes plus the chk byte */
+static int parse_pub(const char *pw, u8 key[4], u8 *chk) {
+    unsigned int b0, b1, b2, b3, b4;
+    if (sscanf(pw, "pub-%02x%02x-%02x%02x-%02x", &b0, &b1, &b2, &b3, &b4) != 5) return 0;
+    key[0] = (u8)b0; key[1] = (u8)b1; key[2] = (u8)b2; key[3] = (u8)b3;
+    *chk = (u8)b4;
+    return 1;
+}
+
 /* ---------------- bit reader (MSB first) ---------------- */
 typedef struct { const u8 *d; u32 len, pos; unsigned __int64 acc; int n; } BitRd;
 static int br_read(BitRd *b, int k) {
@@ -361,7 +370,7 @@ static int decode_one(const char *arc, const char *outdir, const char *passwd,
     char pwb[256];
     BitRd br; u32 valsA[ALPHA_A], valsB[ALPHA_B]; u16 lensA[ALPHA_A], lensB[ALPHA_B];
     SymDecoder sA, sB; LzState st;
-    u8 *table, *filebuf; u32 batch_off, max_size;
+    u8 *table, *filebuf; u32 max_size;
     struct { u32 size; u32 ts; const char *name; } *ents;
     unsigned __int64 sum;
     clock_t t0 = clock();
@@ -397,8 +406,14 @@ static int decode_one(const char *arc, const char *outdir, const char *passwd,
             if (!l) die("password was not input");
             passwd = pwb;
         }
-        derive_key(passwd, xk);
-        if (data[7] != pw_chk(passwd)) die("Password is not match !");
+        {
+            u8 chk = 0;
+            if (!parse_pub(passwd, xk, &chk)) {
+                derive_key(passwd, xk);
+                chk = pw_chk(passwd);
+            }
+            if (data[7] != chk) die("Password is not match !");
+        }
         for (q = 20; q < datasz; q++) data[q] ^= xk[(q - 20) & 3];
     }
     table = (u8 *)malloc(Bt ? Bt : 1);
@@ -455,56 +470,61 @@ static int decode_one(const char *arc, const char *outdir, const char *passwd,
     if (!filebuf) die("oom file buffer");
 
     printf("%s: %s (%d files, %s Bytes)\n", test_mode ? "TestDir" : "OutDir", outdir, (int)Cnt, fmt_num(payload_size));
-    batch_off = 0;
-    for (i = 0; i < (int)Cnt; i++) {
-        u32 file_start;
-        if (batch_off == 0 || (unsigned __int64)batch_off + ents[i].size > max_size) {
-            lz_reset(&st, filebuf);
-            batch_off = 0;
-        }
-        file_start = batch_off;
-        if (ents[i].size) {
-            if (!lz_decompress(&br, &sA, &sB, ents[i].size, &st, max_size)) die("corrupt data stream");
-        }
-        batch_off += ents[i].size;
-
-        if (test_mode) {
-            printf("TestFile(%d/%d): %s (%s Bytes)\n", i + 1, (int)Cnt, ents[i].name, fmt_num(ents[i].size));
-            continue;
-        }
-
-        {
-            char path[1200];
-            int r = _snprintf(path, sizeof(path), "%s\\%s", outdir, ents[i].name);
-            if (r < 0 || r >= (int)sizeof(path)) die2("output path too long: ", ents[i].name);
-            {
-                char *s;
-                for (s = path; *s; ) {
-                    if (is_dbcs_lead((unsigned char)*s) && s[1]) { s += 2; continue; }
-                    if (*s == '/') *s = '\\';
-                    s++;
-                }
+    {
+        u32 bi = 0;
+        while (bi < Cnt) {
+            u32 bstart = bi, blen = 0, boff = 0, bj;
+            while (bi < Cnt &&
+                   (unsigned __int64)blen + ents[bi].size <= (unsigned __int64)max_size) {
+                blen += ents[bi].size;
+                bi++;
             }
-            make_parents(path);
-            if (exists(path)) {
-                char q[2048];
-                _snprintf(q, sizeof(q), "File(%s) has already existed. Do you want to write over it?", ents[i].name);
-                q[sizeof(q) - 1] = 0;
-                if (!ask_yn(q, assume_yes)) {
-                    if (ask_yn("Do you compare previous file with compressed file?", assume_yes)) {
-                        printf("CompFile(%d/%d): %s (%s Bytes)\n", i + 1, (int)Cnt, ents[i].name, fmt_num(ents[i].size));
-                        if (compare_file(path, filebuf + file_start, ents[i].size))
-                            printf("Two files are entirely match.\n");
-                        else
-                            printf("Contents of previous file and compressed file is not match.\n");
-                    } else {
-                        printf("File(%s) is not output.\n", ents[i].name);
-                    }
+            lz_reset(&st, filebuf);
+            if (blen) {
+                if (!lz_decompress(&br, &sA, &sB, blen, &st, max_size)) die("corrupt data stream");
+                if (st.outpos != blen) die("corrupt data stream");
+            }
+            for (bj = bstart; bj < bi; bj++) {
+                u32 file_start = boff;
+                boff += ents[bj].size;
+                if (test_mode) {
+                    printf("TestFile(%d/%d): %s (%s Bytes)\n", bj + 1, (int)Cnt, ents[bj].name, fmt_num(ents[bj].size));
                     continue;
                 }
+                {
+                    char path[1200];
+                    int r = _snprintf(path, sizeof(path), "%s\\%s", outdir, ents[bj].name);
+                    if (r < 0 || r >= (int)sizeof(path)) die2("output path too long: ", ents[bj].name);
+                    {
+                        char *s;
+                        for (s = path; *s; ) {
+                            if (is_dbcs_lead((unsigned char)*s) && s[1]) { s += 2; continue; }
+                            if (*s == '/') *s = '\\';
+                            s++;
+                        }
+                    }
+                    make_parents(path);
+                    if (exists(path)) {
+                        char q[2048];
+                        _snprintf(q, sizeof(q), "File(%s) has already existed. Do you want to write over it?", ents[bj].name);
+                        q[sizeof(q) - 1] = 0;
+                        if (!ask_yn(q, assume_yes)) {
+                            if (ask_yn("Do you compare previous file with compressed file?", assume_yes)) {
+                                printf("CompFile(%d/%d): %s (%s Bytes)\n", bj + 1, (int)Cnt, ents[bj].name, fmt_num(ents[bj].size));
+                                if (compare_file(path, filebuf + file_start, ents[bj].size))
+                                    printf("Two files are entirely match.\n");
+                                else
+                                    printf("Contents of previous file and compressed file is not match.\n");
+                            } else {
+                                printf("File(%s) is not output.\n", ents[bj].name);
+                            }
+                            continue;
+                        }
+                    }
+                    write_file(path, filebuf + file_start, ents[bj].size, ents[bj].ts);
+                    printf("OutFile(%d/%d): %s (%s Bytes)\n", bj + 1, (int)Cnt, ents[bj].name, fmt_num(ents[bj].size));
+                }
             }
-            write_file(path, filebuf + file_start, ents[i].size, ents[i].ts);
-            printf("OutFile(%d/%d): %s (%s Bytes)\n", i + 1, (int)Cnt, ents[i].name, fmt_num(ents[i].size));
         }
     }
     if (test_mode) {

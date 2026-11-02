@@ -463,7 +463,6 @@ int yzFileDecode::DecodeFile(const char * fileName, const int & in_decode_mode)
     char sec[32];
     unsigned char * buf = 0;
     long max_size = 0;
-    size_t batch_off = 0;
     unsigned __int64 total = 0;
     char err[256];
 
@@ -483,10 +482,8 @@ int yzFileDecode::DecodeFile(const char * fileName, const int & in_decode_mode)
             return -1;
         }
         total += (unsigned __int64)sz;
+        if (sz > max_size) max_size = sz;
     }
-
-    max_size = yzfiledecode_p_yz_dec_head->m_file_size_max;
-    if (max_size < 0) max_size = 0;
     buf = (unsigned char *)malloc((size_t)(max_size ? max_size : 1));
     if (!buf) {
         char szbuf[32];
@@ -507,38 +504,42 @@ int yzFileDecode::DecodeFile(const char * fileName, const int & in_decode_mode)
             return -1;
         }
 
-        for (i = 0; i < yzfiledecode_p_yz_dec_head->m_file_count; i++) {
+        i = 0;
+        while (i < yzfiledecode_p_yz_dec_head->m_file_count) {
             yzDecHead * h = yzfiledecode_p_yz_dec_head;
-            long sz = h->m_file_size_tbl[i];
-            size_t file_start;
-            yzFileStat st(h->m_file_name_tbl[i], sz, (time_t)h->m_file_mtime_tbl[i]);
-            int act = yzm ? yzm->gauge_WriteInfo(st, (int)i, (int)h->m_file_count) : 0;
-            if (act == 2) { free(buf); return -1; }
-
-            if (batch_off == 0 ||
-                (unsigned __int64)batch_off + (unsigned __int64)sz > (unsigned __int64)max_size) {
-                dec.reset(buf);
-                batch_off = 0;
+            long bstart = i;
+            unsigned __int64 blen = 0;
+            size_t boff = 0;
+            long j;
+            while (i < h->m_file_count &&
+                   blen + (unsigned __int64)h->m_file_size_tbl[i] <= (unsigned __int64)max_size) {
+                blen += (unsigned __int64)h->m_file_size_tbl[i];
+                i++;
             }
-            file_start = batch_off;
-            if (sz && !dec.decode(buf, (size_t)max_size, (size_t)sz, err, sizeof(err))) {
+            dec.reset(buf);
+            if (blen && !dec.decode(buf, (size_t)max_size, (size_t)blen, err, sizeof(err))) {
                 evEX(yzm, YZ_MSG_TBL_92, YZ_MSG_NO_92);
                 free(buf);
                 return -1;
             }
-            batch_off += (size_t)sz;
-
-            if (act == 0 && in_decode_mode == 0) {
-                if (h->FileWrite(dir, (int)i, buf + file_start) != 0) {
-                    free(buf);
-                    return -1;
+            for (j = bstart; j < i; j++) {
+                long sz = h->m_file_size_tbl[j];
+                yzFileStat st(h->m_file_name_tbl[j], sz, (time_t)h->m_file_mtime_tbl[j]);
+                int act = yzm ? yzm->gauge_WriteInfo(st, (int)j, (int)h->m_file_count) : 0;
+                if (act == 2) { free(buf); return -1; }
+                if (act == 0 && in_decode_mode == 0) {
+                    if (h->FileWrite(dir, (int)j, buf + boff) != 0) {
+                        free(buf);
+                        return -1;
+                    }
                 }
-            }
-            if (yzm && h->m_file_count) {
-                char ss[64];
-                _snprintf(ss, sizeof(ss), "%s", h->m_file_name_tbl[i].c_str());
-                yzm->gauge_String(ss);
-                yzm->gauge_Value((int)((i + 1) * 1000 / h->m_file_count), 0);
+                boff += (size_t)sz;
+                if (yzm && h->m_file_count) {
+                    char ss[64];
+                    _snprintf(ss, sizeof(ss), "%s", h->m_file_name_tbl[j].c_str());
+                    yzm->gauge_String(ss);
+                    yzm->gauge_Value((int)((j + 1) * 1000 / h->m_file_count), 0);
+                }
             }
         }
     }
